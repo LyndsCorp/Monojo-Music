@@ -352,12 +352,14 @@ class MonojoMusicApp:
         dlg = tk.Toplevel(self.root)
         dlg.title(title)
         dlg.transient(self.root)
-        dlg.grab_set()
         dlg.resizable(False, False)
 
-        # Texto grande: fuente 12, wraplength 450
         tk.Label(dlg, text=message, wraplength=450, justify="left",
                  font=("TkDefaultFont", 12), padx=20, pady=20).pack()
+
+        # Asegurar que la ventana está visible antes de tomar el grab
+        dlg.wait_visibility()
+        dlg.grab_set()
 
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.bind("<q>", lambda e: dlg.destroy())
@@ -420,18 +422,18 @@ class MonojoMusicApp:
         dlg.geometry("560x550")
         dlg.resizable(False, False)
 
-        frm = tk.Frame(dlg)
-        frm.pack(fill="both", expand=True, padx=12, pady=12)
-
-        scrollbar = tk.Scrollbar(frm)
-        scrollbar.pack(side="right", fill="y")
-
-        text_widget = tk.Text(frm, wrap="word", yscrollcommand=scrollbar.set,
-                              font=("TkDefaultFont", 10), padx=10, pady=10)
+        # Texto sin scrollbar; el scroll con rueda o flechas sigue funcionando
+        text_widget = tk.Text(dlg, wrap="word", font=("TkDefaultFont", 10), padx=10, pady=10)
         text_widget.insert("1.0", guia_texto)
         text_widget.config(state="disabled")
-        text_widget.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=text_widget.yview)
+        text_widget.pack(fill="both", expand=True, padx=12, pady=12)
+
+        # Scroll con rueda del ratón (para todas las plataformas)
+        def _on_mousewheel(event):
+            text_widget.yview_scroll(int(-1*(event.delta/120)), "units")
+        text_widget.bind("<MouseWheel>", _on_mousewheel)
+        text_widget.bind("<Button-4>", lambda e: text_widget.yview_scroll(-1, "units"))
+        text_widget.bind("<Button-5>", lambda e: text_widget.yview_scroll(1, "units"))
 
         dlg.bind("<question>", lambda e: self._close_guide(dlg))
         dlg.bind("<Escape>", lambda e: self._close_guide(dlg))
@@ -834,14 +836,10 @@ class MonojoMusicApp:
         top.grab_set()
 
         tk.Label(top, text="Selecciona una playlist para cargar:").pack(pady=10)
-        frame = tk.Frame(top)
-        frame.pack(fill="both", expand=True, padx=15, pady=5)
-        scrollbar = tk.Scrollbar(frame)
-        scrollbar.pack(side="right", fill="y")
-        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, selectmode="single",
-                             exportselection=False)
-        listbox.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=listbox.yview)
+
+        # Listbox sin scrollbar
+        listbox = tk.Listbox(top, selectmode="single", exportselection=False)
+        listbox.pack(fill="both", expand=True, padx=15, pady=5)
 
         for f in files:
             listbox.insert(tk.END, f[:-4])
