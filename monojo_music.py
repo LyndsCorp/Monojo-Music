@@ -395,7 +395,7 @@ class MonojoMusicApp:
         dlg.title("Guía de Controles")
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("560x500")
+        dlg.geometry("560x550")
         dlg.resizable(False, False)
 
         frm = tk.Frame(dlg)
