@@ -4,7 +4,7 @@
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 # Depuración en /tmp/monojo_music_debug.log
 
-# Monojo Music 2.1: arreglo de un bug y créditos
+# Monojo Music 2.1: atajos de teclado y créditos
 # GPL v3 License, Monojo Project, David Baña Szymaniak
 
 import os
@@ -249,11 +249,9 @@ if MPRIS_AVAILABLE:
                 title = os.path.splitext(base)[0]
                 dur_sec = self.app.current_duration
                 duration_us = dbus.Int64(dur_sec * 1000000)
-                # --- CAMBIO: artista = playlist o Biblioteca ---
                 artist = "Biblioteca"
                 if self.app.from_playlist and self.app.playlist_name:
                     artist = self.app.playlist_name
-                # -------------------------------------------------
                 self._metadata = {
                     "xesam:title": title,
                     "xesam:artist": [artist],
@@ -324,6 +322,13 @@ class MonojoMusicApp:
         self.reload_playlist_listbox()
         self.root.after(POLL_INTERVAL_MS, self.poll_playback)
 
+        # Seleccionar automáticamente la primera canción y dar foco a la biblioteca
+        if self.lib_files:
+            self.lib_listbox.selection_set(0)
+            self.lib_listbox.activate(0)
+            self.lib_listbox.see(0)
+            self.lib_listbox.focus_set()
+
         # MPRIS
         self.mpris = None
         if MPRIS_AVAILABLE:
@@ -337,6 +342,27 @@ class MonojoMusicApp:
         else:
             debug("MPRIS no disponible. La integración multimedia no se activará.")
 
+    # ==================== Ventana de información personalizada (se cierra con Q/Escape) ====================
+    def _show_info_dialog(self, title, message):
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text=message, wraplength=400, justify="left", padx=20, pady=20).pack()
+        tk.Button(dlg, text="Cerrar", command=dlg.destroy).pack(pady=(0, 10))
+
+        dlg.bind("<q>", lambda e: dlg.destroy())
+        dlg.bind("<Q>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.focus_set()
+        # Centrar en el padre
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{x}+{y}")
+
     # ==================== INTERFAZ GRÁFICA ====================
     def build_ui(self):
         top = tk.Frame(self.root)
@@ -344,7 +370,6 @@ class MonojoMusicApp:
         tk.Button(top, text="Nueva Playlist", command=self.new_playlist).pack(side="left", padx=4)
         tk.Button(top, text="Guardar Playlist", command=self.save_playlist).pack(side="left", padx=4)
         tk.Button(top, text="Cargar Playlist", command=self.choose_and_load_playlist).pack(side="left", padx=4)
-        # --- Botón Créditos a la izquierda de Atajos de teclado ---
         tk.Button(top, text="Créditos", command=self.show_credits).pack(side="right", padx=4)
         tk.Button(top, text="Atajos de teclado", command=self.show_guide).pack(side="right", padx=4)
 
@@ -430,17 +455,21 @@ class MonojoMusicApp:
             "• Tecla X: Detener reproducción (Parar)\n"
             "• Tecla C: Pausar / Reanudar la reproducción\n"
             "• Tecla V: Reproducir toda la playlist activa\n"
+            "• Tecla P: Nueva playlist\n"
+            "• Tecla O: Cargar playlist (Enter para seleccionar)\n"
+            "• Tecla L: Activar/desactivar bucle\n"
+            "• Tecla S: Activar/desactivar modo aleatorio\n"
+            "• Control derecho: Créditos\n"
             "• Tecla ?: Mostrar esta ayuda\n\n"
-            "Puedes cerrar esta ventana con las teclas Q o Escape, o con el botón Cerrar."
+            "Todas las ventanas emergentes se pueden cerrar con Q o Escape."
         )
 
         dlg = tk.Toplevel(self.root)
         dlg.title("Guía de Controles")
         dlg.transient(self.root)
         dlg.grab_set()
-        dlg.geometry("520x500")
+        dlg.geometry("560x500")
 
-        # Frame para el texto con scrollbar
         frm = tk.Frame(dlg)
         frm.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
@@ -450,33 +479,30 @@ class MonojoMusicApp:
         text_widget = tk.Text(frm, wrap="word", yscrollcommand=scrollbar.set,
                               font=("TkDefaultFont", 10), padx=10, pady=10)
         text_widget.insert("1.0", guia_texto)
-        text_widget.config(state="disabled")  # solo lectura
+        text_widget.config(state="disabled")
         text_widget.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=text_widget.yview)
 
-        # Botón Cerrar
         btn_frame = tk.Frame(dlg)
         btn_frame.pack(pady=10)
         tk.Button(btn_frame, text="Cerrar", command=dlg.destroy).pack()
 
-        # Vincular teclas para cerrar
         dlg.bind("<q>", lambda e: dlg.destroy())
         dlg.bind("<Q>", lambda e: dlg.destroy())
         dlg.bind("<Escape>", lambda e: dlg.destroy())
-
-        # Dar foco a la ventana para que las teclas funcionen
         dlg.focus_set()
 
     def show_credits(self):
         creditos = (
-            "Monojo Music 2.1\n\n"
+            "Monojo Music 2.0\n\n"
             "Desarrollado por David Baña Szymaniak\n"
-            "Monojo Project\n\n"
-            "Licencia GPL v3 o posterior\n\n"
-            "Reproductor de música Monojo\n"
-            "Usa ffplay como backend."
+            "Proyecto Monojo\n\n"
+            "Licencia GPL v3\n\n"
+            "Reproductor de audio minimalista con MPRIS2\n"
+            "Usa ffplay como backend.\n"
+            "Icono: Monojo amarillo"
         )
-        messagebox.showinfo("Créditos", creditos)
+        self._show_info_dialog("Créditos", creditos)
 
     def on_key_press(self, event):
         try:
@@ -488,7 +514,23 @@ class MonojoMusicApp:
         sym = event.keysym
         char = event.char.lower() if event.char else ""
 
-        # Tecla ? para abrir la guía
+        # Nuevos atajos
+        if char == 'p':
+            self.new_playlist()
+            return
+        if char == 'o':
+            self.choose_and_load_playlist()
+            return
+        if char == 'l':
+            self.toggle_loop()
+            return
+        if char == 's':
+            self.toggle_shuffle()
+            return
+        if sym == "Control_R":
+            self.show_credits()
+            return
+
         if char == '?':
             self.show_guide()
             return
@@ -559,7 +601,7 @@ class MonojoMusicApp:
                     self.refresh_library()
                     self.reload_playlist_listbox()
             except Exception as e:
-                messagebox.showerror("Error Deshacer", f"No se pudo revertir el renombrado:\n{e}")
+                self._show_info_dialog("Error", f"No se pudo revertir el renombrado:\n{e}")
 
     def switch_focus_to_playlist(self):
         sel = self.lib_listbox.curselection()
@@ -637,14 +679,19 @@ class MonojoMusicApp:
                     dst.write(src.read())
                 added += 1
             except Exception:
-                messagebox.showwarning("Error", f"No se pudo copiar: {p}")
+                self._show_info_dialog("Error", f"No se pudo copiar: {p}")
         if added:
             self.refresh_library()
+            if self.lib_files:
+                self.lib_listbox.selection_set(0)
+                self.lib_listbox.activate(0)
+                self.lib_listbox.see(0)
+                self.lib_listbox.focus_set()
 
     def delete_music(self):
         sel = list(self.lib_listbox.curselection())
         if not sel:
-            messagebox.showinfo("Eliminar MP3", "Selecciona archivos en la biblioteca para eliminar.")
+            self._show_info_dialog("Eliminar MP3", "Selecciona archivos en la biblioteca para eliminar.")
             return
         names = [self.lib_files[i] for i in sel]
         if not messagebox.askyesno("Confirmar", f"¿Eliminar {len(names)} archivo(s) de Músicas?"):
@@ -655,16 +702,21 @@ class MonojoMusicApp:
                 if os.path.exists(full):
                     os.remove(full)
             except Exception:
-                messagebox.showwarning("Error", f"No se pudo borrar: {n}")
+                self._show_info_dialog("Error", f"No se pudo borrar: {n}")
         self.undo_stack.clear()
         self.refresh_library()
         self.playlist_items = [x for x in self.playlist_items if x not in names]
         self.reload_playlist_listbox()
+        if self.lib_files:
+            self.lib_listbox.selection_set(0)
+            self.lib_listbox.activate(0)
+            self.lib_listbox.see(0)
+            self.lib_listbox.focus_set()
 
     def rename_music(self):
         sel = self.lib_listbox.curselection()
         if not sel:
-            messagebox.showinfo("Renombrar", "Selecciona una canción en la biblioteca para renombrar.")
+            self._show_info_dialog("Renombrar", "Selecciona una canción en la biblioteca para renombrar.")
             return
         idx = sel[0]
         old_fullname = self.lib_files[idx]
@@ -676,12 +728,12 @@ class MonojoMusicApp:
         old_path = os.path.join(MUSIC_DIR, old_fullname)
         new_path = os.path.join(MUSIC_DIR, new_fullname)
         if os.path.exists(new_path):
-            messagebox.showwarning("Atención", f"Ya existe una canción con el nombre '{new_base}'. No se hará nada.")
+            self._show_info_dialog("Atención", f"Ya existe una canción con el nombre '{new_base}'. No se hará nada.")
             return
         try:
             os.rename(old_path, new_path)
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo renombrar el archivo:\n{e}")
+            self._show_info_dialog("Error", f"No se pudo renombrar el archivo:\n{e}")
             return
         self.undo_stack.append({
             "action": "rename",
@@ -707,7 +759,7 @@ class MonojoMusicApp:
         self.undo_stack.clear()
         self.reload_playlist_listbox()
         self.update_playlist_label()
-        messagebox.showinfo("Playlist", f"Playlist '{name}' creada (vacía).")
+        self._show_info_dialog("Playlist", f"Playlist '{name}' creada (vacía).")
 
     def save_playlist(self):
         if not self.playlist_name:
@@ -721,14 +773,14 @@ class MonojoMusicApp:
                 for it in self.playlist_items:
                     f.write(it + "\n")
             self.update_playlist_label()
-            messagebox.showinfo("Guardado", f"Playlist guardada: {path}")
+            self._show_info_dialog("Guardado", f"Playlist guardada: {path}")
         except Exception as e:
-            messagebox.showerror("Error", f"No se pudo guardar playlist:\n{e}")
+            self._show_info_dialog("Error", f"No se pudo guardar playlist:\n{e}")
 
     def choose_and_load_playlist(self):
         files = [f for f in os.listdir(PLAYLIST_DIR) if f.endswith(".txt")]
         if not files:
-            messagebox.showinfo("Playlists", "No hay playlists guardadas.")
+            self._show_info_dialog("Playlists", "No hay playlists guardadas.")
             return
         top = tk.Toplevel(self.root)
         top.title("Seleccionar Playlist")
@@ -749,22 +801,28 @@ class MonojoMusicApp:
         def on_load():
             sel = listbox.curselection()
             if not sel:
-                messagebox.showwarning("Atención", "Selecciona una playlist de la lista.")
+                self._show_info_dialog("Atención", "Selecciona una playlist de la lista.")
                 return
             choice = listbox.get(sel[0])
             top.destroy()
             self._load_playlist_file(choice)
 
         listbox.bind("<Double-Button-1>", lambda e: on_load())
+        listbox.bind("<Return>", lambda e: on_load())
         btn_frame = tk.Frame(top)
         btn_frame.pack(pady=10)
         tk.Button(btn_frame, text="Cargar", command=on_load).pack(side="left", padx=10)
         tk.Button(btn_frame, text="Cancelar", command=top.destroy).pack(side="right", padx=10)
 
+        top.bind("<q>", lambda e: top.destroy())
+        top.bind("<Q>", lambda e: top.destroy())
+        top.bind("<Escape>", lambda e: top.destroy())
+        listbox.focus_set()
+
     def _load_playlist_file(self, choice):
         path = os.path.join(PLAYLIST_DIR, choice + ".txt")
         if not os.path.exists(path):
-            messagebox.showerror("Error", "No existe esa playlist.")
+            self._show_info_dialog("Error", "No existe esa playlist.")
             return
         self.playlist_name = choice
         loaded = []
@@ -777,7 +835,7 @@ class MonojoMusicApp:
         self.undo_stack.clear()
         self.reload_playlist_listbox()
         self.update_playlist_label()
-        messagebox.showinfo("Cargada", f"Playlist '{choice}' cargada con {len(loaded)} canciones.")
+        self._show_info_dialog("Cargada", f"Playlist '{choice}' cargada con {len(loaded)} canciones.")
 
     def reload_playlist_listbox(self):
         self.pl_listbox.delete(0, tk.END)
@@ -791,13 +849,12 @@ class MonojoMusicApp:
         self.playlist_label.config(text=f"Playlist actual: {display}")
 
     def add_selected_to_playlist(self):
-        # CORRECCIÓN: comprobar si hay una playlist abierta (nombre), no si está vacía
         if not self.playlist_name:
-            messagebox.showwarning("Sin Playlist", "No hay ninguna playlist abierta. Crea o carga una playlist primero.")
+            self._show_info_dialog("Sin Playlist", "No hay ninguna playlist abierta. Crea o carga una playlist primero.")
             return
         sel = list(self.lib_listbox.curselection())
         if not sel:
-            messagebox.showwarning("Sin selección", "Selecciona una canción en la Biblioteca para añadir a Playlist.")
+            self._show_info_dialog("Sin selección", "Selecciona una canción en la Biblioteca para añadir a Playlist.")
             return
         added_items = []
         for i in sel:
@@ -839,15 +896,15 @@ class MonojoMusicApp:
 
     def move_in_playlist_up(self):
         if not self.playlist_items:
-            messagebox.showwarning("Sin Playlist", "No hay ninguna playlist abierta.")
+            self._show_info_dialog("Sin Playlist", "No hay ninguna playlist abierta.")
             return
         sel = self.pl_listbox.curselection()
         if not sel:
-            messagebox.showinfo("Sin selección", "Selecciona una canción en la Playlist para mover.")
+            self._show_info_dialog("Sin selección", "Selecciona una canción en la Playlist para mover.")
             return
         i = sel[0]
         if i == 0:
-            messagebox.showinfo("Límite", "Esta canción ya está en la primera posición.")
+            self._show_info_dialog("Límite", "Esta canción ya está en la primera posición.")
             return
         j = i - 1
         self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
@@ -857,15 +914,15 @@ class MonojoMusicApp:
 
     def move_in_playlist_down(self):
         if not self.playlist_items:
-            messagebox.showwarning("Sin Playlist", "No hay ninguna playlist abierta.")
+            self._show_info_dialog("Sin Playlist", "No hay ninguna playlist abierta.")
             return
         sel = self.pl_listbox.curselection()
         if not sel:
-            messagebox.showinfo("Sin selección", "Selecciona una canción en la Playlist para mover.")
+            self._show_info_dialog("Sin selección", "Selecciona una canción en la Playlist para mover.")
             return
         i = sel[0]
         if i == len(self.playlist_items) - 1:
-            messagebox.showinfo("Límite", "Esta canción ya está en la última posición.")
+            self._show_info_dialog("Límite", "Esta canción ya está en la última posición.")
             return
         j = i + 1
         self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
@@ -907,7 +964,6 @@ class MonojoMusicApp:
         self.paused_flag = False
         self.pause_btn.config(text="Pausar")
 
-        # Inyectar PULSE_PROP para renombrar el stream de audio
         env = os.environ.copy()
         env["PULSE_PROP"] = f"application.name={STREAM_NAME}"
 
@@ -924,7 +980,7 @@ class MonojoMusicApp:
                 self.mpris.update_metadata()
                 self.mpris.emit_properties_changed()
         except FileNotFoundError:
-            messagebox.showerror("Error", "No se pudo ejecutar el reproductor (ffplay).")
+            self._show_info_dialog("Error", "No se pudo ejecutar el reproductor (ffplay).")
             self.play_proc = None
             self.is_playing = False
 
@@ -986,7 +1042,7 @@ class MonojoMusicApp:
     # ==================== CONTROL DE PLAYLIST ====================
     def play_playlist(self, start_index=0):
         if not self.playlist_items:
-            messagebox.showinfo("Playlist", "La playlist está vacía.")
+            self._show_info_dialog("Playlist", "La playlist está vacía.")
             return
         if start_index < 0 or start_index >= len(self.playlist_items):
             start_index = 0
@@ -994,7 +1050,7 @@ class MonojoMusicApp:
         name = self.playlist_items[self.playlist_index]
         path = os.path.join(MUSIC_DIR, name)
         if not os.path.exists(path):
-            messagebox.showerror("Error", f"No existe: {name}")
+            self._show_info_dialog("Error", f"No existe: {name}")
             return
         self.play_file(path, start_at=0.0, from_playlist=True)
 
