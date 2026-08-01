@@ -4,7 +4,7 @@
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 # Depuración en /tmp/monojo_music_debug.log
 
-# Monojo Music 2.0: integración con KDE Connect
+# Monojo Music 2.1: arreglo de un bug y créditos
 # GPL v3 License, Monojo Project, David Baña Szymaniak
 
 import os
@@ -344,6 +344,8 @@ class MonojoMusicApp:
         tk.Button(top, text="Nueva Playlist", command=self.new_playlist).pack(side="left", padx=4)
         tk.Button(top, text="Guardar Playlist", command=self.save_playlist).pack(side="left", padx=4)
         tk.Button(top, text="Cargar Playlist", command=self.choose_and_load_playlist).pack(side="left", padx=4)
+        # --- Botón Créditos a la izquierda de Atajos de teclado ---
+        tk.Button(top, text="Créditos", command=self.show_credits).pack(side="right", padx=4)
         tk.Button(top, text="Atajos de teclado", command=self.show_guide).pack(side="right", padx=4)
 
         main = tk.Frame(self.root)
@@ -410,7 +412,7 @@ class MonojoMusicApp:
         self.root.bind("<Key>", self.on_key_press)
 
     def show_guide(self):
-        guia = (
+        guia_texto = (
             "--- Atajos de Teclado ---\n\n"
             "• Control + Z: Deshacer última acción\n"
             "• Eliminar (Backspace): Elimina de la biblioteca los archivos seleccionados\n"
@@ -427,9 +429,54 @@ class MonojoMusicApp:
             "• Enter o Tecla Z: Reproducir canción seleccionada\n"
             "• Tecla X: Detener reproducción (Parar)\n"
             "• Tecla C: Pausar / Reanudar la reproducción\n"
-            "• Tecla V: Reproducir toda la playlist activa"
+            "• Tecla V: Reproducir toda la playlist activa\n"
+            "• Tecla ?: Mostrar esta ayuda\n\n"
+            "Puedes cerrar esta ventana con las teclas Q o Escape, o con el botón Cerrar."
         )
-        messagebox.showinfo("Guía de Controles", guia)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Guía de Controles")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("520x500")
+
+        # Frame para el texto con scrollbar
+        frm = tk.Frame(dlg)
+        frm.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+
+        scrollbar = tk.Scrollbar(frm)
+        scrollbar.pack(side="right", fill="y")
+
+        text_widget = tk.Text(frm, wrap="word", yscrollcommand=scrollbar.set,
+                              font=("TkDefaultFont", 10), padx=10, pady=10)
+        text_widget.insert("1.0", guia_texto)
+        text_widget.config(state="disabled")  # solo lectura
+        text_widget.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=text_widget.yview)
+
+        # Botón Cerrar
+        btn_frame = tk.Frame(dlg)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Cerrar", command=dlg.destroy).pack()
+
+        # Vincular teclas para cerrar
+        dlg.bind("<q>", lambda e: dlg.destroy())
+        dlg.bind("<Q>", lambda e: dlg.destroy())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+
+        # Dar foco a la ventana para que las teclas funcionen
+        dlg.focus_set()
+
+    def show_credits(self):
+        creditos = (
+            "Monojo Music 2.1\n\n"
+            "Desarrollado por David Baña Szymaniak\n"
+            "Monojo Project\n\n"
+            "Licencia GPL v3 o posterior\n\n"
+            "Reproductor de música Monojo\n"
+            "Usa ffplay como backend."
+        )
+        messagebox.showinfo("Créditos", creditos)
 
     def on_key_press(self, event):
         try:
@@ -440,6 +487,11 @@ class MonojoMusicApp:
         is_ctrl = (event.state & 0x0004) != 0
         sym = event.keysym
         char = event.char.lower() if event.char else ""
+
+        # Tecla ? para abrir la guía
+        if char == '?':
+            self.show_guide()
+            return
 
         if is_ctrl and sym.lower() == "z":
             self.undo_action()
@@ -739,7 +791,8 @@ class MonojoMusicApp:
         self.playlist_label.config(text=f"Playlist actual: {display}")
 
     def add_selected_to_playlist(self):
-        if not self.playlist_items:
+        # CORRECCIÓN: comprobar si hay una playlist abierta (nombre), no si está vacía
+        if not self.playlist_name:
             messagebox.showwarning("Sin Playlist", "No hay ninguna playlist abierta. Crea o carga una playlist primero.")
             return
         sel = list(self.lib_listbox.curselection())
