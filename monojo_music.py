@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.1: atajos de teclado y créditos
+# Monojo Music 2.2: atajos de teclado y créditos
 # GPL v3 License, Monojo Project, David Baña Szymaniak
 
 import os
