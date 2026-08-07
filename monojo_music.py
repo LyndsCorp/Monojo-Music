@@ -450,7 +450,7 @@ class MonojoMusicApp:
 
     def _show_credits_window(self):
         creditos = (
-            "Monojo Music 2.1\n\n"
+            "Monojo Music 2.2\n\n"
             "Desarrollado por David Baña Szymaniak\n"
             "Monojo Project\n\n"
             "Licencia GPL v3 o posterior\n\n"
