@@ -4,7 +4,10 @@
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
 # Monojo Music 2.2: atajos de teclado y créditos
-# GPL v3 License, Monojo Project, David Baña Szymaniak
+# Licencia: GPL v3
+# Proyecto: Monojo Project
+# Autor: David Baña Szymaniak
+# Copyright (C) 2026 David Baña Szymaniak
 
 import os
 import sys
