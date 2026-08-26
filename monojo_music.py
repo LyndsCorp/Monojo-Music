@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.3: corrección de arranque y tema oscuro completo
+# Monojo Music 2.3: versión corregida y completa
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -22,8 +22,8 @@ import threading
 
 # ------------------- Depuración -------------------
 DEBUG_ENABLED = True
-
 DEBUG_LOG = "/tmp/monojo_music_debug.log"
+
 def debug(msg):
     if DEBUG_ENABLED:
         with open(DEBUG_LOG, "a") as f:
@@ -73,7 +73,6 @@ if not FFPLAY_PATH:
     sys.exit(1)
 
 FFPLAY_EXEC = FFPLAY_PATH
-
 STREAM_NAME = "Monojo Music"
 
 # ---------------- Utilidades de audio ----------------
@@ -820,129 +819,839 @@ class MonojoMusicApp:
 
         self.root.bind("<Key>", self.on_key_press)
 
-    # ==================== MÉTODOS DE TECLADO, BIBLIOTECA, PLAYLIST, REPRODUCCIÓN, ETC. ====================
-    # (Deben copiarse desde versiones anteriores; aquí se resumen para no alargar en exceso)
-
+    # ==================== MÉTODOS DE TECLADO Y ACCIONES ====================
     def on_key_press(self, event):
-        # Implementación completa aquí (igual que versiones anteriores)
-        pass
+        try:
+            if event.widget.winfo_class() in ("Entry", "Text", "Spinbox"):
+                return
+        except Exception:
+            pass
+        is_ctrl = (event.state & 0x0004) != 0
+        sym = event.keysym
+        char = event.char.lower() if event.char else ""
+
+        if char == 'p':
+            self.new_playlist()
+            return
+        if char == 'o':
+            self.choose_and_load_playlist()
+            return
+        if char == 'l':
+            self.toggle_loop()
+            return
+        if char == 's':
+            self.toggle_shuffle()
+            return
+        if sym == "Control_R":
+            self.toggle_credits()
+            return
+        if char == '?':
+            self.toggle_guide()
+            return
+
+        if is_ctrl and sym.lower() == "z":
+            self.undo_action()
+            return
+        if sym == "BackSpace":
+            self.delete_music()
+        elif sym == "Right":
+            self.switch_focus_to_playlist()
+        elif sym == "Left":
+            self.switch_focus_to_library()
+        elif sym == "Return" or (char == "z" and not is_ctrl):
+            self.play_selected_or_resume()
+        elif char == "a":
+            self.add_music()
+        elif char == "r":
+            self.rename_music()
+        elif char == "x":
+            self.stop_action()
+        elif char == "c":
+            self.pause_toggle()
+        elif char == "v":
+            self.play_playlist()
+        elif char == "m":
+            self.add_selected_to_playlist()
+        elif char == "n":
+            self.remove_selected_from_playlist()
+        elif char == "i":
+            self.move_in_playlist_up()
+        elif char == "k":
+            self.move_in_playlist_down()
 
     def undo_action(self):
-        pass
+        if not self.undo_stack:
+            return
+        last = self.undo_stack.pop()
+        action = last["action"]
+        if action == "add_pl":
+            for item in last["items"]:
+                if item in self.playlist_items:
+                    self.playlist_items.remove(item)
+            self.reload_playlist_listbox()
+        elif action == "rm_pl":
+            items = sorted(last["items"], key=lambda x: x[0])
+            for idx, item in items:
+                self.playlist_items.insert(idx, item)
+            self.reload_playlist_listbox()
+        elif action == "move_pl":
+            i, j = last["idx1"], last["idx2"]
+            self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
+            self.reload_playlist_listbox()
+            self.pl_listbox.selection_clear(0, tk.END)
+            self.pl_listbox.select_set(i)
+        elif action == "rename":
+            old_path, new_path = last["old_path"], last["new_path"]
+            old_name, new_name = last["old_name"], last["new_name"]
+            try:
+                if os.path.exists(new_path):
+                    os.rename(new_path, old_path)
+                    for k in range(len(self.playlist_items)):
+                        if self.playlist_items[k] == new_name:
+                            self.playlist_items[k] = old_name
+                    if self.current_path == new_path:
+                        self.current_path = old_path
+                        self.update_now_label()
+                    self.refresh_library()
+                    self.reload_playlist_listbox()
+            except Exception as e:
+                self._info("Error", f"No se pudo revertir el renombrado:\n{e}")
 
     def switch_focus_to_playlist(self):
-        pass
+        sel = self.lib_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        pl_size = self.pl_listbox.size()
+        if pl_size == 0:
+            return
+        target_idx = idx if idx < pl_size else pl_size - 1
+        self.lib_listbox.selection_clear(0, tk.END)
+        self.pl_listbox.selection_clear(0, tk.END)
+        self.pl_listbox.selection_set(target_idx)
+        self.pl_listbox.activate(target_idx)
+        self.pl_listbox.see(target_idx)
+        self.pl_listbox.focus_set()
 
     def switch_focus_to_library(self):
-        pass
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        lib_size = self.lib_listbox.size()
+        if lib_size == 0:
+            return
+        target_idx = idx if idx < lib_size else lib_size - 1
+        self.pl_listbox.selection_clear(0, tk.END)
+        self.lib_listbox.selection_clear(0, tk.END)
+        self.lib_listbox.selection_set(target_idx)
+        self.lib_listbox.activate(target_idx)
+        self.lib_listbox.see(target_idx)
+        self.lib_listbox.focus_set()
 
+    # ==================== BIBLIOTECA ====================
     def refresh_library(self):
-        pass
+        self.lib_listbox.delete(0, tk.END)
+        self.lib_files = []
+        try:
+            VALID_EXT = (".mp3", ".wav", ".flac", ".ogg", ".m4a", ".opus", ".mp4", ".mkv")
+            items = sorted([
+                f for f in os.listdir(MUSIC_DIR)
+                if f.lower().endswith(VALID_EXT)
+            ])
+        except Exception:
+            items = []
+        for it in items:
+            self.lib_files.append(it)
+            base_name = os.path.splitext(it)[0]
+            self.lib_listbox.insert(tk.END, base_name)
 
     def add_music(self):
-        pass
+        paths = zenity_select_multiple_files(title="Selecciona MP3 para añadir", initial_dir=MUSIC_DIR)
+        if not paths:
+            paths = filedialog.askopenfilenames(
+                title="Selecciona MP3", initialdir=MUSIC_DIR,
+                filetypes=[("Archivos de audio/video", "*.mp3 *.wav *.flac *.ogg *.m4a *.opus *.mp4 *.mkv")]
+            )
+            if not paths:
+                return
+        added = 0
+        for p in paths:
+            if not p:
+                continue
+            try:
+                dest = os.path.join(MUSIC_DIR, os.path.basename(p))
+                if os.path.exists(dest) and os.path.realpath(p) == os.path.realpath(dest):
+                    continue
+                if os.path.exists(dest):
+                    base, ext = os.path.splitext(os.path.basename(p))
+                    k = 1
+                    while os.path.exists(os.path.join(MUSIC_DIR, f"{base}_{k}{ext}")):
+                        k += 1
+                    dest = os.path.join(MUSIC_DIR, f"{base}_{k}{ext}")
+                with open(p, "rb") as src, open(dest, "wb") as dst:
+                    dst.write(src.read())
+                added += 1
+            except Exception:
+                self._info("Error", f"No se pudo copiar: {p}")
+        if added:
+            self.refresh_library()
+            if self.lib_files:
+                self.lib_listbox.selection_set(0)
+                self.lib_listbox.activate(0)
+                self.lib_listbox.see(0)
+                self.lib_listbox.focus_set()
 
     def delete_music(self):
-        pass
+        sel = list(self.lib_listbox.curselection())
+        if not sel:
+            self._info("Eliminar MP3", "Selecciona archivos en la biblioteca para eliminar.")
+            return
+        names = [self.lib_files[i] for i in sel]
+        if not messagebox.askyesno("Confirmar", f"¿Eliminar {len(names)} archivo(s) de Músicas?"):
+            return
+        for n in names:
+            try:
+                full = os.path.join(MUSIC_DIR, n)
+                if os.path.exists(full):
+                    os.remove(full)
+            except Exception:
+                self._info("Error", f"No se pudo borrar: {n}")
+        self.undo_stack.clear()
+        self.refresh_library()
+        self.playlist_items = [x for x in self.playlist_items if x not in names]
+        self.reload_playlist_listbox()
+        if self.lib_files:
+            self.lib_listbox.selection_set(0)
+            self.lib_listbox.activate(0)
+            self.lib_listbox.see(0)
+            self.lib_listbox.focus_set()
 
     def rename_music(self):
-        pass
+        sel = self.lib_listbox.curselection()
+        if not sel:
+            self._info("Renombrar", "Selecciona una canción en la biblioteca para renombrar.")
+            return
+        idx = sel[0]
+        old_fullname = self.lib_files[idx]
+        base_name, ext = os.path.splitext(old_fullname)
+        new_base = simpledialog.askstring("Renombrar", "Nuevo nombre (sin extensión):", initialvalue=base_name)
+        if not new_base or new_base == base_name:
+            return
+        new_fullname = new_base + ext
+        old_path = os.path.join(MUSIC_DIR, old_fullname)
+        new_path = os.path.join(MUSIC_DIR, new_fullname)
+        if os.path.exists(new_path):
+            self._info("Atención", f"Ya existe una canción con el nombre '{new_base}'. No se hará nada.")
+            return
+        try:
+            os.rename(old_path, new_path)
+        except Exception as e:
+            self._info("Error", f"No se pudo renombrar el archivo:\n{e}")
+            return
+        self.undo_stack.append({
+            "action": "rename",
+            "old_path": old_path, "new_path": new_path,
+            "old_name": old_fullname, "new_name": new_fullname
+        })
+        for i in range(len(self.playlist_items)):
+            if self.playlist_items[i] == old_fullname:
+                self.playlist_items[i] = new_fullname
+        if self.current_path == old_path:
+            self.current_path = new_path
+            self.update_now_label()
+        self.refresh_library()
+        self.reload_playlist_listbox()
 
+    # ==================== PLAYLIST ====================
     def new_playlist(self):
-        pass
+        name = simpledialog.askstring("Nueva Playlist", "Nombre de la playlist (sin extensión):")
+        if not name:
+            return
+        self.playlist_name = name
+        self.playlist_items = []
+        self.undo_stack.clear()
+        self.reload_playlist_listbox()
+        self.update_playlist_label()
+        self._info("Playlist", f"Playlist '{name}' creada (vacía).")
 
     def save_playlist(self):
-        pass
+        if not self.playlist_name:
+            name = simpledialog.askstring("Guardar Playlist", "Nombre de la playlist (sin extensión):")
+            if not name:
+                return
+            self.playlist_name = name
+        path = os.path.join(PLAYLIST_DIR, self.playlist_name + ".txt")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for it in self.playlist_items:
+                    f.write(it + "\n")
+            self.update_playlist_label()
+            self._info("Guardado", f"Playlist guardada: {path}")
+        except Exception as e:
+            self._info("Error", f"No se pudo guardar playlist:\n{e}")
 
     def choose_and_load_playlist(self):
-        pass
+        files = [f for f in os.listdir(PLAYLIST_DIR) if f.endswith(".txt")]
+        if not files:
+            self.new_playlist()
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title("Seleccionar Playlist")
+        top.geometry("300x400")
+        top.transient(self.root)
+        top.grab_set()
+
+        tk.Label(top, text="Selecciona una playlist para cargar:").pack(pady=10)
+
+        listbox = tk.Listbox(top, selectmode="single", exportselection=False)
+        listbox.pack(fill="both", expand=True, padx=15, pady=5)
+
+        for f in files:
+            listbox.insert(tk.END, f[:-4])
+
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+            listbox.activate(0)
+            listbox.focus_set()
+
+        def move_selection(delta):
+            cur = listbox.curselection()
+            if not cur:
+                new_idx = 0
+            else:
+                new_idx = cur[0] + delta
+            if 0 <= new_idx < listbox.size():
+                listbox.selection_clear(0, tk.END)
+                listbox.selection_set(new_idx)
+                listbox.activate(new_idx)
+                listbox.see(new_idx)
+            return "break"
+
+        listbox.bind("<Up>", lambda e: move_selection(-1))
+        listbox.bind("<Down>", lambda e: move_selection(1))
+
+        def on_load():
+            sel = listbox.curselection()
+            if not sel:
+                return
+            choice = listbox.get(sel[0])
+            top.destroy()
+            self.root.after(50, lambda: self._load_playlist_file(choice))
+
+        listbox.bind("<Double-Button-1>", lambda e: on_load())
+        listbox.bind("<Return>", lambda e: on_load())
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.bind("<q>", lambda e: top.destroy())
+        top.bind("<Q>", lambda e: top.destroy())
+
+        if self.current_theme == 'dark':
+            self.apply_dark_theme_to_widget(top)
+        else:
+            self.restore_default_theme_to_widget(top)
+
+        self.open_toplevels.append(top)
+        top.bind("<Destroy>", lambda e: self.open_toplevels.remove(top) if top in self.open_toplevels else None)
 
     def _load_playlist_file(self, choice):
-        pass
+        path = os.path.join(PLAYLIST_DIR, choice + ".txt")
+        if not os.path.exists(path):
+            self._info("Error", "No existe esa playlist.")
+            return
+        self.playlist_name = choice
+        loaded = []
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                name = line.strip()
+                if os.path.exists(os.path.join(MUSIC_DIR, name)):
+                    loaded.append(name)
+        self.playlist_items = loaded
+        self.undo_stack.clear()
+        self.reload_playlist_listbox()
+        self.update_playlist_label()
+        self._info("Cargada", f"Playlist '{choice}' cargada con {len(loaded)} canciones.")
 
     def reload_playlist_listbox(self):
-        pass
+        self.pl_listbox.delete(0, tk.END)
+        for it in self.playlist_items:
+            base_name = os.path.splitext(it)[0]
+            self.pl_listbox.insert(tk.END, base_name)
+        self.update_playlist_label()
 
     def update_playlist_label(self):
-        pass
+        display = self.playlist_name if self.playlist_name else "(sin nombre)"
+        self.playlist_label.config(text=f"Playlist actual: {display}")
 
     def add_selected_to_playlist(self):
-        pass
+        if not self.playlist_name:
+            self._info("Sin Playlist", "No hay ninguna playlist abierta. Crea o carga una playlist primero.")
+            return
+        sel = list(self.lib_listbox.curselection())
+        if not sel:
+            self._info("Sin selección", "Selecciona una canción en la Biblioteca para añadir a Playlist.")
+            return
+        added_items = []
+        for i in sel:
+            name = self.lib_files[i]
+            if name not in self.playlist_items:
+                self.playlist_items.append(name)
+                added_items.append(name)
+        if added_items:
+            self.undo_stack.append({"action": "add_pl", "items": added_items})
+        self.reload_playlist_listbox()
 
     def remove_selected_from_playlist(self):
-        pass
+        sel = list(self.pl_listbox.curselection())
+        if not sel:
+            return
+        removed_items = []
+        for i in reversed(sel):
+            try:
+                removed_items.append((i, self.playlist_items[i]))
+                del self.playlist_items[i]
+            except Exception:
+                pass
+        if removed_items:
+            self.undo_stack.append({"action": "rm_pl", "items": removed_items})
+        self.reload_playlist_listbox()
 
     def move_in_playlist(self, direction):
-        pass
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            return
+        i = sel[0]
+        j = i + direction
+        if j < 0 or j >= len(self.playlist_items):
+            return
+        self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
+        self.undo_stack.append({"action": "move_pl", "idx1": i, "idx2": j})
+        self.reload_playlist_listbox()
+        self.pl_listbox.select_set(j)
 
     def move_in_playlist_up(self):
-        pass
+        if not self.playlist_items:
+            self._info("Sin Playlist", "No hay ninguna playlist abierta.")
+            return
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            self._info("Sin selección", "Selecciona una canción en la Playlist para mover.")
+            return
+        i = sel[0]
+        if i == 0:
+            self._info("Límite", "Esta canción ya está en la primera posición.")
+            return
+        j = i - 1
+        self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
+        self.undo_stack.append({"action": "move_pl", "idx1": i, "idx2": j})
+        self.reload_playlist_listbox()
+        self.pl_listbox.select_set(j)
 
     def move_in_playlist_down(self):
-        pass
+        if not self.playlist_items:
+            self._info("Sin Playlist", "No hay ninguna playlist abierta.")
+            return
+        sel = self.pl_listbox.curselection()
+        if not sel:
+            self._info("Sin selección", "Selecciona una canción en la Playlist para mover.")
+            return
+        i = sel[0]
+        if i == len(self.playlist_items) - 1:
+            self._info("Límite", "Esta canción ya está en la última posición.")
+            return
+        j = i + 1
+        self.playlist_items[i], self.playlist_items[j] = self.playlist_items[j], self.playlist_items[i]
+        self.undo_stack.append({"action": "move_pl", "idx1": i, "idx2": j})
+        self.reload_playlist_listbox()
+        self.pl_listbox.select_set(j)
 
+    # ==================== REPRODUCCIÓN ====================
     def play_selected_or_resume(self):
-        pass
+        pl_sel = self.pl_listbox.curselection()
+        if pl_sel:
+            self.playlist_index = pl_sel[0]
+            self.play_playlist(start_index=self.playlist_index)
+            return
+        lib_sel = self.lib_listbox.curselection()
+        if lib_sel:
+            name = self.lib_files[lib_sel[0]]
+            self.play_file(os.path.join(MUSIC_DIR, name), start_at=0.0, from_playlist=False)
+            return
+        if self.paused_flag and self.current_path:
+            self.play_file(self.current_path, start_at=self.play_start_time, from_playlist=self.from_playlist)
+            self.paused_flag = False
+            self.pause_btn.config(text="Pausar")
+            return
+        if self.current_path and not self.is_playing:
+            self.play_file(self.current_path, start_at=self.play_start_time, from_playlist=self.from_playlist)
+            return
 
     def play_file(self, path, start_at=0.0, from_playlist=False):
-        pass
+        dur = ffprobe_duration(path) or 0.0
+        if dur > 0 and start_at >= dur:
+            start_at = max(0.0, dur - 0.5)
+        self.stop_process()
+        self.current_path = path
+        self.current_duration = dur
+        self.play_start_time = float(start_at)
+        self.play_time_offset = time.time()
+        self.from_playlist = bool(from_playlist)
+        self.paused_flag = False
+        self.pause_btn.config(text="Pausar")
+
+        env = os.environ.copy()
+        env["PULSE_PROP"] = f"application.name={STREAM_NAME}"
+
+        try:
+            self.play_proc = subprocess.Popen(
+                [FFPLAY_EXEC, "-nodisp", "-autoexit", "-loglevel", "quiet",
+                 "-ss", str(self.play_start_time), path],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=env
+            )
+            self.is_playing = True
+            self.update_now_label()
+            if self.mpris:
+                self.mpris.update_metadata()
+                self.mpris.emit_properties_changed()
+        except FileNotFoundError:
+            self._info("Error", "No se pudo ejecutar el reproductor (ffplay).")
+            self.play_proc = None
+            self.is_playing = False
 
     def stop_process(self):
-        pass
+        if self.play_proc:
+            try:
+                self.play_proc.terminate()
+                try:
+                    self.play_proc.wait(timeout=0.4)
+                except Exception:
+                    self.play_proc.kill()
+            except Exception:
+                pass
+        self.play_proc = None
+        self.is_playing = False
 
     def pause_toggle(self):
-        pass
+        if self.is_playing:
+            cur = self.get_playback_time()
+            self.stop_process()
+            self.play_start_time = min(cur, self.current_duration)
+            self.paused_flag = True
+            self.pause_btn.config(text="Continuar")
+            self.update_now_label()
+            if self.mpris:
+                self.mpris.emit_properties_changed()
+            return
+        if self.paused_flag and self.current_path:
+            self.play_file(self.current_path, start_at=self.play_start_time, from_playlist=self.from_playlist)
+            self.paused_flag = False
+            self.pause_btn.config(text="Pausar")
+            return
+        if not self.is_playing and self.current_path:
+            self.play_file(self.current_path, start_at=self.play_start_time, from_playlist=self.from_playlist)
 
     def stop_action(self):
-        pass
+        if self.is_playing or self.play_proc:
+            self.stop_process()
+        self.play_start_time = 0.0
+        self.paused_flag = False
+        self.pause_btn.config(text="Pausar")
+        self.update_now_label()
+        self.update_time_and_progress(0.0, 0.0)
+        if self.mpris:
+            self.mpris.emit_properties_changed()
 
     def get_playback_time(self):
-        pass
+        if not self.current_path:
+            return 0.0
+        if self.is_playing and self.play_proc:
+            elapsed = time.time() - self.play_time_offset
+            t = self.play_start_time + elapsed
+            if self.current_duration > 0:
+                return min(t, self.current_duration)
+            return t
+        else:
+            return min(self.play_start_time, self.current_duration) if self.current_duration > 0 else self.play_start_time
 
     def play_playlist(self, start_index=0):
-        pass
+        if not self.playlist_items:
+            self._info("Playlist", "La playlist está vacía.")
+            return
+        if start_index < 0 or start_index >= len(self.playlist_items):
+            start_index = 0
+        self.playlist_index = start_index
+        name = self.playlist_items[self.playlist_index]
+        path = os.path.join(MUSIC_DIR, name)
+        if not os.path.exists(path):
+            self._info("Error", f"No existe: {name}")
+            return
+        self.play_file(path, start_at=0.0, from_playlist=True)
 
     def advance_playlist(self):
-        pass
+        if not self.playlist_items:
+            self.stop_action()
+            return
+        if self.shuffle_flag:
+            if 0 <= self.playlist_index < len(self.playlist_items):
+                self.shuffle_history.append(self.playlist_index)
+            if len(self.playlist_items) == 1:
+                next_idx = 0
+            else:
+                choices = list(range(len(self.playlist_items)))
+                try:
+                    choices.remove(self.playlist_index)
+                except Exception:
+                    pass
+                next_idx = random.choice(choices)
+        else:
+            next_idx = self.playlist_index + 1
+        if not self.shuffle_flag and next_idx >= len(self.playlist_items):
+            if self.loop_flag:
+                next_idx = 0
+            else:
+                self.stop_action()
+                return
+        self.playlist_index = next_idx
+        name = self.playlist_items[self.playlist_index]
+        path = os.path.join(MUSIC_DIR, name)
+        if os.path.exists(path):
+            self.play_file(path, start_at=0.0, from_playlist=True)
+        else:
+            try:
+                del self.playlist_items[self.playlist_index]
+            except Exception:
+                pass
+            self.reload_playlist_listbox()
+            self.advance_playlist()
 
     def prev_playlist(self):
-        pass
+        if not self.playlist_items:
+            return
+        if self.shuffle_flag and self.shuffle_history:
+            idx = self.shuffle_history.pop()
+        else:
+            idx = self.playlist_index - 1
+            if idx < 0:
+                if self.loop_flag:
+                    idx = len(self.playlist_items) - 1
+                else:
+                    idx = 0
+        self.playlist_index = idx
+        name = self.playlist_items[self.playlist_index]
+        path = os.path.join(MUSIC_DIR, name)
+        if os.path.exists(path):
+            self.play_file(path, start_at=0.0, from_playlist=True)
 
     def next_track(self):
-        pass
+        if self.from_playlist and self.playlist_items:
+            self.advance_playlist()
+            return
+        lib_items = self.lib_files
+        if not lib_items:
+            return
+        curname = os.path.basename(self.current_path) if self.current_path else None
+        if self.shuffle_flag:
+            if curname in lib_items:
+                try:
+                    self.shuffle_history.append(lib_items.index(curname))
+                except Exception:
+                    pass
+            if len(lib_items) == 1:
+                idx = 0
+            else:
+                choices = list(range(len(lib_items)))
+                if curname in lib_items:
+                    try:
+                        choices.remove(lib_items.index(curname))
+                    except Exception:
+                        pass
+                idx = random.choice(choices)
+            name = lib_items[idx]
+            self.play_file(os.path.join(MUSIC_DIR, name), start_at=0.0, from_playlist=False)
+            return
+        if curname and curname in lib_items:
+            idx = lib_items.index(curname) + 1
+        else:
+            sel = self.lib_listbox.curselection()
+            if sel:
+                idx = sel[0] + 1
+            else:
+                idx = 0
+        if idx >= len(lib_items):
+            if self.loop_flag:
+                idx = 0
+            else:
+                self.stop_action()
+                return
+        name = lib_items[idx]
+        self.play_file(os.path.join(MUSIC_DIR, name), start_at=0.0, from_playlist=False)
 
     def prev_track(self):
-        pass
+        if self.from_playlist and self.playlist_items:
+            self.prev_playlist()
+            return
+        lib_items = self.lib_files
+        if not lib_items:
+            return
+        curname = os.path.basename(self.current_path) if self.current_path else None
+        if self.shuffle_flag:
+            if self.shuffle_history:
+                idx = self.shuffle_history.pop()
+            else:
+                if len(lib_items) == 1:
+                    idx = 0
+                else:
+                    choices = list(range(len(lib_items)))
+                    if curname in lib_items:
+                        try:
+                            choices.remove(lib_items.index(curname))
+                        except Exception:
+                            pass
+                    idx = random.choice(choices)
+            name = lib_items[idx]
+            self.play_file(os.path.join(MUSIC_DIR, name), start_at=0.0, from_playlist=False)
+            return
+        if curname and curname in lib_items:
+            idx = lib_items.index(curname) - 1
+        else:
+            sel = self.lib_listbox.curselection()
+            if sel:
+                idx = sel[0] - 1
+            else:
+                idx = len(lib_items) - 1 if self.loop_flag else 0
+        if idx < 0:
+            if self.loop_flag:
+                idx = len(lib_items) - 1
+            else:
+                idx = 0
+        name = lib_items[idx]
+        self.play_file(os.path.join(MUSIC_DIR, name), start_at=0.0, from_playlist=False)
 
     def on_progress_drag(self, value):
-        pass
+        try:
+            v = float(value)
+        except Exception:
+            v = 0.0
+        dur = max(1.0, self.current_duration)
+        self.time_lbl.config(text=f"{self.format_time(v)} / {self.format_time(dur)}")
 
     def on_progress_release(self, event):
-        pass
+        if not self.current_path:
+            self.progress.set(0)
+            return
+        val = self.progress.get()
+        if val < 0: val = 0
+        if val > self.current_duration: val = self.current_duration
+        self.play_start_time = float(val)
+        if self.is_playing:
+            self.play_file(self.current_path, start_at=self.play_start_time, from_playlist=self.from_playlist)
+        else:
+            self.update_time_and_progress(self.play_start_time, self.current_duration)
 
     def format_time(self, sec):
-        pass
+        sec = max(0, int(sec))
+        m = sec // 60
+        s = sec % 60
+        return f"{m:02d}:{s:02d}"
 
     def poll_playback(self):
-        pass
+        try:
+            if self.is_playing and self.play_proc:
+                cur = self.get_playback_time()
+                self.update_time_and_progress(cur, self.current_duration)
+                if self.play_proc.poll() is not None:
+                    self.handle_playback_end()
+            else:
+                if self.current_path:
+                    cur = self.get_playback_time()
+                    self.update_time_and_progress(cur, self.current_duration)
+        except Exception:
+            pass
+        self.root.after(POLL_INTERVAL_MS, self.poll_playback)
 
     def handle_playback_end(self):
-        pass
+        if self.loop_flag:
+            self.play_file(self.current_path, start_at=0.0, from_playlist=self.from_playlist)
+            return
+        if self.from_playlist:
+            name = os.path.basename(self.current_path) if self.current_path else None
+            if name and name in self.playlist_items:
+                if 0 <= self.playlist_index < len(self.playlist_items) and self.playlist_items[self.playlist_index] == name:
+                    self.advance_playlist()
+                    return
+            self.stop_action()
+        else:
+            self.next_track()
 
     def update_time_and_progress(self, cur, dur):
-        pass
+        if dur <= 0:
+            self.progress.config(to=1)
+            self.progress.set(0)
+            self.time_lbl.config(text="00:00 / 00:00")
+            return
+        try:
+            self.progress.config(to=max(1, int(dur)))
+            pos = min(int(cur), int(dur))
+            self.progress.set(pos)
+        except Exception:
+            pass
+        cur_disp = min(cur, dur) if dur > 0 else cur
+        self.time_lbl.config(text=f"{self.format_time(cur_disp)} / {self.format_time(dur)}")
 
     def update_now_label(self):
-        pass
+        if not self.current_path:
+            self.now_lbl.config(text="Ninguna canción seleccionada")
+            return
+        base = os.path.basename(self.current_path)
+        base_no_ext = os.path.splitext(base)[0]
+        if self.is_playing:
+            state = "Reproduciendo"
+        elif self.paused_flag:
+            state = "Pausado"
+        else:
+            state = "Detenido"
+        text = f"{state}: {base_no_ext}"
+        if self.playlist_items and base in self.playlist_items:
+            try:
+                idx = self.playlist_items.index(base) + 1
+                text += f"  ({idx}/{len(self.playlist_items)})"
+            except Exception:
+                pass
+        self.now_lbl.config(text=text)
 
     def toggle_loop(self):
-        pass
+        self.loop_flag = not self.loop_flag
+        self.loop_btn.config(text=f"Bucle: {'ON' if self.loop_flag else 'OFF'}")
+        if self.mpris:
+            self.mpris.emit_properties_changed()
 
     def toggle_shuffle(self):
-        pass
+        self.shuffle_flag = not self.shuffle_flag
+        self.shuffle_history = []
+        self.shuffle_btn.config(text=f"Aleatorio: {'ON' if self.shuffle_flag else 'OFF'}")
+        if self.mpris:
+            self.mpris.emit_properties_changed()
 
     def on_close(self):
-        pass
+        if self.playlist_name:
+            try:
+                path = os.path.join(PLAYLIST_DIR, self.playlist_name + ".txt")
+                with open(path, "w", encoding="utf-8") as f:
+                    for it in self.playlist_items:
+                        f.write(it + "\n")
+            except Exception:
+                pass
+        try:
+            if self.play_proc:
+                self.play_proc.terminate()
+                try:
+                    self.play_proc.wait(timeout=1)
+                except Exception:
+                    self.play_proc.kill()
+        except Exception:
+            pass
+        self.root.destroy()
 
 # ==================== ARRANQUE ====================
 def start_glib_loop():
@@ -961,8 +1670,17 @@ if __name__ == "__main__":
         root = tk.Tk(className="monojo_music_main")
         app = MonojoMusicApp(root)
         if len(sys.argv) > 1:
-            # ... (código para abrir archivos)
-            pass
+            for path in sys.argv[1:]:
+                if os.path.isfile(path):
+                    dest = os.path.join(MUSIC_DIR, os.path.basename(path))
+                    if not os.path.exists(dest):
+                        shutil.copy2(path, MUSIC_DIR)
+            app.refresh_library()
+            first = os.path.basename(sys.argv[1])
+            full = os.path.join(MUSIC_DIR, first)
+            if os.path.exists(full):
+                app.play_file(full)
+                debug(f"Reproduciendo archivo pasado por argumento: {full}")
         root.mainloop()
     except Exception as e:
         debug(f"ERROR FATAL: {e}")
