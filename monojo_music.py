@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.3: modo claro/oscuro porque quiero escuchar música de noche
+# Monojo Music 2.3: tema automático claro/oscuro
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -291,8 +291,6 @@ LIGHT_THEME = {
     'fg': '#000000',
     'selectbg': '#4a90d9',
     'selectfg': '#ffffff',
-    'buttonbg': '#e0e0e0',
-    'buttonfg': '#000000',
     'entrybg': '#ffffff',
     'entryfg': '#000000',
     'textbg': '#ffffff',
@@ -301,9 +299,6 @@ LIGHT_THEME = {
     'scalefg': '#000000',
     'troughcolor': '#d0d0d0',
     'highlightbackground': '#a0a0a0',
-    'bordercolor': '#a0a0a0',
-    'disabledbg': '#d0d0d0',
-    'disabledfg': '#808080',
 }
 
 DARK_THEME = {
@@ -311,8 +306,6 @@ DARK_THEME = {
     'fg': '#ffffff',
     'selectbg': '#4a90d9',
     'selectfg': '#ffffff',
-    'buttonbg': '#3c3c3c',
-    'buttonfg': '#ffffff',
     'entrybg': '#1e1e1e',
     'entryfg': '#ffffff',
     'textbg': '#1e1e1e',
@@ -321,9 +314,6 @@ DARK_THEME = {
     'scalefg': '#ffffff',
     'troughcolor': '#555555',
     'highlightbackground': '#555555',
-    'bordercolor': '#555555',
-    'disabledbg': '#3c3c3c',
-    'disabledfg': '#888888',
 }
 
 def detect_system_theme():
@@ -418,7 +408,7 @@ class MonojoMusicApp:
 
     # --------------- Funciones de tema ---------------
     def apply_theme_to_widget(self, widget):
-        """Aplica el tema actual a un widget y sus hijos recursivamente."""
+        """Aplica el tema actual a un widget y sus hijos recursivamente, excepto botones."""
         colors = DARK_THEME if self.current_theme == 'dark' else LIGHT_THEME
         cls = widget.winfo_class()
         try:
@@ -426,45 +416,34 @@ class MonojoMusicApp:
                 widget.configure(bg=colors['bg'])
             elif cls == 'Label':
                 widget.configure(bg=colors['bg'], fg=colors['fg'])
-            elif cls == 'Button':
-                widget.configure(
-                    bg=colors['buttonbg'], fg=colors['buttonfg'],
-                    activebackground=colors['buttonbg'], activeforeground=colors['buttonfg'],
-                    highlightbackground=colors['highlightbackground'],
-                    highlightcolor=colors['highlightbackground'],
-                    relief='raised', bd=1
-                )
             elif cls == 'Listbox':
                 widget.configure(
                     bg=colors['entrybg'], fg=colors['entryfg'],
                     selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
-                    highlightbackground=colors['highlightbackground'],
-                    highlightcolor=colors['highlightbackground'],
-                    relief='solid', bd=1
+                    highlightthickness=0,  # elimina borde blanco
+                    relief='flat'
                 )
             elif cls == 'Scale':
                 widget.configure(
                     bg=colors['scalebg'], fg=colors['scalefg'],
                     troughcolor=colors['troughcolor'],
-                    highlightbackground=colors['highlightbackground'],
-                    highlightcolor=colors['highlightbackground']
+                    highlightthickness=0
                 )
             elif cls == 'Text':
                 widget.configure(
                     bg=colors['textbg'], fg=colors['textfg'],
                     insertbackground=colors['fg'],
                     selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
-                    highlightbackground=colors['highlightbackground'],
-                    highlightcolor=colors['highlightbackground']
+                    highlightthickness=0
                 )
             elif cls == 'Entry':
                 widget.configure(
                     bg=colors['entrybg'], fg=colors['entryfg'],
                     insertbackground=colors['fg'],
                     selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
-                    highlightbackground=colors['highlightbackground'],
-                    highlightcolor=colors['highlightbackground']
+                    highlightthickness=0
                 )
+            # Nota: los botones (Button) no se modifican para mantener su aspecto nativo
         except tk.TclError:
             pass  # Ignorar si el widget no soporta alguna opción
 
