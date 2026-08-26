@@ -64,7 +64,7 @@ MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 PLAYLIST_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL_MS = 250
-THEME_POLL_INTERVAL_MS = 2000
+THEME_POLL_INTERVAL_MS = 2000   # Comprobación periódica del tema del sistema
 
 # ------------------- Detectar ffplay -------------------
 FFPLAY_PATH = shutil.which("ffplay")
@@ -323,22 +323,61 @@ LIGHT_THEME = {
     'highlightbackground': '#a0a0a0',
 }
 
-def detect_system_theme():
-    """Devuelve 'dark' o 'light' consultando fuentes fiables."""
-    debug("Detectando tema del sistema...")
+def _detect_kde_theme():
+    """Detecta el tema en KDE Plasma usando kreadconfig o kdeglobals."""
+    # Intentar con kreadconfig5 o kreadconfig6
+    for kread in ('kreadconfig5', 'kreadconfig6'):
+        if shutil.which(kread):
+            try:
+                # Obtener el nombre del esquema de color
+                result = subprocess.run(
+                    [kread, '--file', 'kdeglobals', '--group', 'General', '--key', 'ColorScheme'],
+                    capture_output=True, text=True, timeout=2
+                )
+                scheme = result.stdout.strip()
+                debug(f"KDE ColorScheme ({kread}): {scheme}")
+                if scheme:
+                    if 'dark' in scheme.lower():
+                        return 'dark'
+                    else:
+                        return 'light'
+            except Exception as e:
+                debug(f"Error con {kread}: {e}")
+
+    # Fallback: leer ~/.config/kdeglobals
+    kdeglobals = Path.home() / ".config" / "kdeglobals"
+    if kdeglobals.exists():
+        try:
+            content = kdeglobals.read_text()
+            # Buscar ColorScheme=...
+            for line in content.splitlines():
+                if line.strip().startswith("ColorScheme="):
+                    scheme = line.split("=", 1)[1].strip()
+                    debug(f"KDE ColorScheme (kdeglobals): {scheme}")
+                    if 'dark' in scheme.lower():
+                        return 'dark'
+                    else:
+                        return 'light'
+        except Exception as e:
+            debug(f"Error leyendo kdeglobals: {e}")
+
+    return None  # No se pudo determinar
+
+def _detect_gnome_theme():
+    """Detecta el tema en GNOME usando gsettings."""
     try:
         result = subprocess.run(
             ['gsettings', 'get', 'org.gnome.desktop.interface', 'color-scheme'],
             capture_output=True, text=True, timeout=2
         )
         out = result.stdout.strip().lower()
-        debug(f"color-scheme: {out}")
+        debug(f"GNOME color-scheme: {out}")
         if 'dark' in out:
             return 'dark'
         elif 'light' in out:
             return 'light'
     except Exception as e:
-        debug(f"Error con color-scheme: {e}")
+        debug(f"Error con gsettings color-scheme: {e}")
 
     try:
         result = subprocess.run(
@@ -346,14 +385,44 @@ def detect_system_theme():
             capture_output=True, text=True, timeout=2
         )
         out = result.stdout.strip().lower()
-        debug(f"gtk-theme: {out}")
+        debug(f"GNOME gtk-theme: {out}")
         if 'dark' in out:
             return 'dark'
         elif 'light' in out:
             return 'light'
     except Exception as e:
-        debug(f"Error con gtk-theme: {e}")
+        debug(f"Error con gsettings gtk-theme: {e}")
 
+    return None
+
+def detect_system_theme():
+    """Devuelve 'dark' o 'light' según el entorno de escritorio."""
+    debug("Detectando tema del sistema...")
+    desktop = os.environ.get('XDG_CURRENT_DESKTOP', '').lower()
+    session = os.environ.get('DESKTOP_SESSION', '').lower()
+    debug(f"XDG_CURRENT_DESKTOP: {desktop}, DESKTOP_SESSION: {session}")
+
+    # 1. Si es KDE Plasma
+    if 'kde' in desktop or 'plasma' in session:
+        result = _detect_kde_theme()
+        if result:
+            return result
+
+    # 2. Si es GNOME/Unity/etc.
+    if 'gnome' in desktop or 'unity' in desktop or 'cinnamon' in desktop:
+        result = _detect_gnome_theme()
+        if result:
+            return result
+
+    # 3. Fallback: intentar KDE y GNOME genéricos
+    result = _detect_kde_theme()
+    if result:
+        return result
+    result = _detect_gnome_theme()
+    if result:
+        return result
+
+    # 4. Variable de entorno GTK_THEME
     theme_env = os.environ.get('GTK_THEME', '')
     if theme_env:
         debug(f"GTK_THEME: {theme_env}")
@@ -362,6 +431,7 @@ def detect_system_theme():
         elif 'light' in theme_env.lower():
             return 'light'
 
+    # 5. Por defecto, claro
     debug("Sin información fiable, asumiendo claro")
     return 'light'
 
