@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.5: atajos de teclado, créditos y tema automático claro/oscuro
+# Monojo Music 2.3: tema automático claro/oscuro
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -287,22 +287,27 @@ if MPRIS_AVAILABLE:
 
 # ---------------- Utilidades de tema ----------------
 DARK_THEME = {
-    'bg': '#2e2e2e',
-    'fg': '#ffffff',
-    'selectbg': '#4a90d9',
+    'bg': '#2e2e2e',           # fondo general oscuro
+    'fg': '#ffffff',           # texto blanco
+    'selectbg': '#4a90d9',     # selección azul
     'selectfg': '#ffffff',
-    'entrybg': '#1e1e1e',
+    'entrybg': '#1e1e1e',      # fondo de listas, entradas
     'entryfg': '#ffffff',
     'textbg': '#1e1e1e',
     'textfg': '#ffffff',
     'scalebg': '#2e2e2e',
     'scalefg': '#ffffff',
     'troughcolor': '#555555',
+    'buttonbg': '#3c3c3c',     # botones: negro claro
+    'buttonfg': '#ffffff',
+    'buttonactivebg': '#4a4a4a',
+    'buttonactivefg': '#ffffff',
     'highlightbackground': '#555555',
 }
 
 def detect_system_theme():
     """Devuelve 'dark' o 'light' según la configuración del sistema."""
+    # Intento con gsettings color-scheme (más fiable)
     try:
         result = subprocess.run(
             ['gsettings', 'get', 'org.gnome.desktop.interface', 'color-scheme'],
@@ -313,11 +318,26 @@ def detect_system_theme():
         else:
             return 'light'
     except Exception:
-        # Fallback: comprobar variable GTK_THEME
-        theme_env = os.environ.get('GTK_THEME', '')
-        if 'dark' in theme_env.lower():
+        pass
+
+    # Intento con gtk-theme
+    try:
+        result = subprocess.run(
+            ['gsettings', 'get', 'org.gnome.desktop.interface', 'gtk-theme'],
+            capture_output=True, text=True, timeout=2
+        )
+        if 'dark' in result.stdout.lower():
             return 'dark'
-        return 'light'
+    except Exception:
+        pass
+
+    # Fallback: variable de entorno
+    theme_env = os.environ.get('GTK_THEME', '')
+    if 'dark' in theme_env.lower():
+        return 'dark'
+
+    # Por defecto, asumimos claro
+    return 'light'
 
 # ---------------- Aplicación principal ----------------
 class MonojoMusicApp:
@@ -362,7 +382,7 @@ class MonojoMusicApp:
         self.open_toplevels = []  # Lista de ventanas emergentes para actualizar tema
         self.default_colors = {}   # Guardará los colores originales de cada widget
 
-        # Construir interfaz (sin tema aún)
+        # Construir interfaz
         self.build_ui()
 
         # Guardar colores por defecto de los widgets principales
@@ -402,36 +422,52 @@ class MonojoMusicApp:
     # --------------- Funciones de tema ---------------
     def _save_default_colors(self):
         """Guarda los colores por defecto de los widgets principales para poder restaurarlos."""
-        # Tomamos los valores de un widget de cada clase (si existe)
-        try:
-            self.default_colors['Frame'] = self.root.cget('bg')  # Fondo por defecto
-        except:
-            pass
-        # Para Listbox, Scale, Text, etc. guardamos sus opciones típicas
-        # Podemos guardar de los widgets existentes
-        for attr in ['lib_listbox', 'pl_listbox', 'progress', 'now_lbl', 'time_lbl']:
-            widget = getattr(self, attr, None)
-            if widget:
-                cls = widget.winfo_class()
-                if cls == 'Listbox':
-                    self.default_colors.setdefault('Listbox', {})
-                    self.default_colors['Listbox']['bg'] = widget.cget('bg')
-                    self.default_colors['Listbox']['fg'] = widget.cget('fg')
-                    self.default_colors['Listbox']['selectbackground'] = widget.cget('selectbackground')
-                    self.default_colors['Listbox']['selectforeground'] = widget.cget('selectforeground')
-                elif cls == 'Scale':
-                    self.default_colors.setdefault('Scale', {})
-                    self.default_colors['Scale']['bg'] = widget.cget('bg')
-                    self.default_colors['Scale']['fg'] = widget.cget('fg')
-                    self.default_colors['Scale']['troughcolor'] = widget.cget('troughcolor')
-                elif cls == 'Label':
-                    self.default_colors.setdefault('Label', {})
-                    self.default_colors['Label']['bg'] = widget.cget('bg')
-                    self.default_colors['Label']['fg'] = widget.cget('fg')
-                # etc.
+        # Fondo raíz
+        self.default_colors['root_bg'] = self.root.cget('bg')
+
+        # Recogemos colores de ejemplo de cada clase (si existen)
+        # Los botones: tomamos el primer botón que encontremos
+        for widget in self._all_widgets(self.root):
+            cls = widget.winfo_class()
+            if cls not in self.default_colors:
+                try:
+                    self.default_colors[cls] = {
+                        'bg': widget.cget('bg'),
+                        'fg': widget.cget('fg'),
+                    }
+                    # Añadimos opciones específicas según clase
+                    if cls == 'Listbox':
+                        self.default_colors[cls]['selectbackground'] = widget.cget('selectbackground')
+                        self.default_colors[cls]['selectforeground'] = widget.cget('selectforeground')
+                    elif cls == 'Scale':
+                        self.default_colors[cls]['troughcolor'] = widget.cget('troughcolor')
+                    elif cls == 'Button':
+                        self.default_colors[cls]['activebackground'] = widget.cget('activebackground')
+                        self.default_colors[cls]['activeforeground'] = widget.cget('activeforeground')
+                    elif cls in ('Text', 'Entry'):
+                        self.default_colors[cls]['insertbackground'] = widget.cget('insertbackground')
+                        self.default_colors[cls]['selectbackground'] = widget.cget('selectbackground')
+                        self.default_colors[cls]['selectforeground'] = widget.cget('selectforeground')
+                except:
+                    pass
+
+        # Si no hay botones (imposible), aseguramos algo
+        if 'Button' not in self.default_colors:
+            self.default_colors['Button'] = {
+                'bg': '#d9d9d9',
+                'fg': '#000000',
+                'activebackground': '#ececec',
+                'activeforeground': '#000000'
+            }
+
+    def _all_widgets(self, parent):
+        """Generador recursivo de todos los widgets hijos."""
+        for child in parent.winfo_children():
+            yield child
+            yield from self._all_widgets(child)
 
     def apply_dark_theme_to_widget(self, widget):
-        """Aplica el tema oscuro a un widget y sus hijos, excepto botones."""
+        """Aplica el tema oscuro a un widget y sus hijos, incluyendo botones."""
         colors = DARK_THEME
         cls = widget.winfo_class()
         try:
@@ -466,7 +502,15 @@ class MonojoMusicApp:
                     selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
                     highlightthickness=0
                 )
-            # Los botones no se modifican
+            elif cls == 'Button':
+                widget.configure(
+                    bg=colors['buttonbg'], fg=colors['buttonfg'],
+                    activebackground=colors['buttonactivebg'],
+                    activeforeground=colors['buttonactivefg'],
+                    highlightthickness=0,
+                    relief='flat'
+                )
+            # Otros widgets (Checkbutton, Radiobutton) se pueden añadir si se usan
         except tk.TclError:
             pass
 
@@ -474,48 +518,55 @@ class MonojoMusicApp:
             self.apply_dark_theme_to_widget(child)
 
     def restore_default_theme_to_widget(self, widget):
-        """Restaura los colores por defecto a un widget y sus hijos."""
+        """Restaura los colores por defecto a un widget y sus hijos, incluyendo botones."""
         cls = widget.winfo_class()
         try:
             if cls in ('Frame', 'Labelframe', 'Toplevel', 'Tk'):
-                if 'Frame' in self.default_colors:
-                    widget.configure(bg=self.default_colors['Frame'])
+                widget.configure(bg=self.default_colors.get('root_bg', '#d9d9d9'))
             elif cls == 'Label':
                 if 'Label' in self.default_colors:
-                    widget.configure(bg=self.default_colors['Label'].get('bg', ''),
-                                     fg=self.default_colors['Label'].get('fg', ''))
+                    d = self.default_colors['Label']
+                    widget.configure(bg=d.get('bg', '#d9d9d9'), fg=d.get('fg', '#000000'))
+                else:
+                    widget.configure(bg=self.default_colors['root_bg'], fg='#000000')
             elif cls == 'Listbox':
                 if 'Listbox' in self.default_colors:
                     d = self.default_colors['Listbox']
-                    widget.configure(bg=d.get('bg', ''), fg=d.get('fg', ''),
-                                     selectbackground=d.get('selectbackground', ''),
-                                     selectforeground=d.get('selectforeground', ''),
+                    widget.configure(bg=d.get('bg', 'white'), fg=d.get('fg', 'black'),
+                                     selectbackground=d.get('selectbackground', '#4a90d9'),
+                                     selectforeground=d.get('selectforeground', 'white'),
                                      highlightthickness=0, relief='flat')
+                else:
+                    widget.configure(bg='white', fg='black', highlightthickness=0, relief='flat')
             elif cls == 'Scale':
                 if 'Scale' in self.default_colors:
                     d = self.default_colors['Scale']
-                    widget.configure(bg=d.get('bg', ''), fg=d.get('fg', ''),
-                                     troughcolor=d.get('troughcolor', ''),
-                                     highlightthickness=0)
-            elif cls in ('Text', 'Entry'):
-                # Para simplificar, no guardamos individualmente; simplemente intentamos restaurar
-                if cls == 'Text' and 'Text' in self.default_colors:
-                    d = self.default_colors['Text']
-                    widget.configure(bg=d.get('bg', ''), fg=d.get('fg', ''),
-                                     insertbackground=d.get('insertbackground', ''),
-                                     selectbackground=d.get('selectbackground', ''),
-                                     selectforeground=d.get('selectforeground', ''),
-                                     highlightthickness=0)
-                elif cls == 'Entry' and 'Entry' in self.default_colors:
-                    d = self.default_colors['Entry']
-                    widget.configure(bg=d.get('bg', ''), fg=d.get('fg', ''),
-                                     insertbackground=d.get('insertbackground', ''),
-                                     selectbackground=d.get('selectbackground', ''),
-                                     selectforeground=d.get('selectforeground', ''),
+                    widget.configure(bg=d.get('bg', '#d9d9d9'), fg=d.get('fg', 'black'),
+                                     troughcolor=d.get('troughcolor', '#d9d9d9'),
                                      highlightthickness=0)
                 else:
-                    # Si no guardamos, al menos quitamos highlightthickness
-                    widget.configure(highlightthickness=0)
+                    widget.configure(bg='#d9d9d9', fg='black', highlightthickness=0)
+            elif cls in ('Text', 'Entry'):
+                if cls in self.default_colors:
+                    d = self.default_colors[cls]
+                    widget.configure(bg=d.get('bg', 'white'), fg=d.get('fg', 'black'),
+                                     insertbackground=d.get('insertbackground', 'black'),
+                                     selectbackground=d.get('selectbackground', '#4a90d9'),
+                                     selectforeground=d.get('selectforeground', 'white'),
+                                     highlightthickness=0)
+                else:
+                    widget.configure(bg='white', fg='black', insertbackground='black',
+                                     highlightthickness=0)
+            elif cls == 'Button':
+                if 'Button' in self.default_colors:
+                    d = self.default_colors['Button']
+                    widget.configure(bg=d.get('bg', '#d9d9d9'), fg=d.get('fg', 'black'),
+                                     activebackground=d.get('activebackground', '#ececec'),
+                                     activeforeground=d.get('activeforeground', 'black'),
+                                     highlightthickness=1, relief='raised')
+                else:
+                    widget.configure(bg='#d9d9d9', fg='black', highlightthickness=1, relief='raised')
+            # Otros widgets si es necesario
         except tk.TclError:
             pass
 
@@ -658,7 +709,7 @@ class MonojoMusicApp:
 
     def _show_credits_window(self):
         creditos = (
-            "Monojo Music 2.5\n\n"
+            "Monojo Music 2.3\n\n"
             "Desarrollado por David Baña Szymaniak\n"
             "Monojo Project\n\n"
             "Licencia GPL v3 o posterior\n\n"
@@ -829,8 +880,6 @@ class MonojoMusicApp:
             self.move_in_playlist_up()
         elif char == "k":
             self.move_in_playlist_down()
-
-    # ... (resto de métodos sin cambios, ver versión anterior)
 
     def undo_action(self):
         if not self.undo_stack:
