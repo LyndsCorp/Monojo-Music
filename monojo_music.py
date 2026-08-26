@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.3: tema automático claro/oscuro
+# Monojo Music 2.3: tema oscuro y claro porque quiero escuchar música de noche
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -325,11 +325,9 @@ LIGHT_THEME = {
 
 def _detect_kde_theme():
     """Detecta el tema en KDE Plasma usando kreadconfig o kdeglobals."""
-    # Intentar con kreadconfig5 o kreadconfig6
     for kread in ('kreadconfig5', 'kreadconfig6'):
         if shutil.which(kread):
             try:
-                # Obtener el nombre del esquema de color
                 result = subprocess.run(
                     [kread, '--file', 'kdeglobals', '--group', 'General', '--key', 'ColorScheme'],
                     capture_output=True, text=True, timeout=2
@@ -344,12 +342,10 @@ def _detect_kde_theme():
             except Exception as e:
                 debug(f"Error con {kread}: {e}")
 
-    # Fallback: leer ~/.config/kdeglobals
     kdeglobals = Path.home() / ".config" / "kdeglobals"
     if kdeglobals.exists():
         try:
             content = kdeglobals.read_text()
-            # Buscar ColorScheme=...
             for line in content.splitlines():
                 if line.strip().startswith("ColorScheme="):
                     scheme = line.split("=", 1)[1].strip()
@@ -361,7 +357,7 @@ def _detect_kde_theme():
         except Exception as e:
             debug(f"Error leyendo kdeglobals: {e}")
 
-    return None  # No se pudo determinar
+    return None
 
 def _detect_gnome_theme():
     """Detecta el tema en GNOME usando gsettings."""
@@ -402,19 +398,16 @@ def detect_system_theme():
     session = os.environ.get('DESKTOP_SESSION', '').lower()
     debug(f"XDG_CURRENT_DESKTOP: {desktop}, DESKTOP_SESSION: {session}")
 
-    # 1. Si es KDE Plasma
     if 'kde' in desktop or 'plasma' in session:
         result = _detect_kde_theme()
         if result:
             return result
 
-    # 2. Si es GNOME/Unity/etc.
     if 'gnome' in desktop or 'unity' in desktop or 'cinnamon' in desktop:
         result = _detect_gnome_theme()
         if result:
             return result
 
-    # 3. Fallback: intentar KDE y GNOME genéricos
     result = _detect_kde_theme()
     if result:
         return result
@@ -422,7 +415,6 @@ def detect_system_theme():
     if result:
         return result
 
-    # 4. Variable de entorno GTK_THEME
     theme_env = os.environ.get('GTK_THEME', '')
     if theme_env:
         debug(f"GTK_THEME: {theme_env}")
@@ -431,7 +423,6 @@ def detect_system_theme():
         elif 'light' in theme_env.lower():
             return 'light'
 
-    # 5. Por defecto, claro
     debug("Sin información fiable, asumiendo claro")
     return 'light'
 
@@ -479,7 +470,13 @@ class MonojoMusicApp:
 
         # Construir interfaz
         self.build_ui()
-        self.apply_theme_to_widget(self.root)  # Aplicar tema actual
+        self.apply_theme_to_widget(self.root)
+
+        # Asegurar que la raíz quede correctamente coloreada
+        if self.current_theme == 'dark':
+            self.root.configure(bg=DARK_THEME['bg'],
+                                highlightbackground=DARK_THEME['bg'],
+                                highlightcolor=DARK_THEME['bg'])
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -514,8 +511,12 @@ class MonojoMusicApp:
         try:
             if cls in ('Frame', 'Labelframe', 'Toplevel', 'Tk'):
                 widget.configure(bg=colors['bg'])
+                widget.configure(highlightbackground=colors['bg'], highlightcolor=colors['bg'])
+                if cls != 'Labelframe':
+                    widget.configure(bd=0)
             elif cls == 'Label':
                 widget.configure(bg=colors['bg'], fg=colors['fg'])
+                widget.configure(highlightbackground=colors['bg'], highlightcolor=colors['bg'])
             elif cls == 'Listbox':
                 widget.configure(
                     bg=colors['entrybg'], fg=colors['entryfg'],
@@ -557,7 +558,9 @@ class MonojoMusicApp:
                     bg=colors['bg'], fg=colors['fg'],
                     activebackground=colors['bg'],
                     activeforeground=colors['fg'],
-                    selectcolor=colors['entrybg']
+                    selectcolor=colors['entrybg'],
+                    highlightbackground=colors['bg'],
+                    highlightcolor=colors['bg']
                 )
         except tk.TclError as e:
             debug(f"Error aplicando tema a {cls}: {e}")
@@ -567,10 +570,22 @@ class MonojoMusicApp:
 
     def apply_theme_to_all(self):
         """Aplica el tema a la ventana principal y a todas las emergentes."""
+        # Primero, asegurar que la raíz tiene el color correcto
+        if self.current_theme == 'dark':
+            self.root.configure(bg=DARK_THEME['bg'],
+                                highlightbackground=DARK_THEME['bg'],
+                                highlightcolor=DARK_THEME['bg'])
+        else:
+            self.root.configure(bg=LIGHT_THEME['bg'],
+                                highlightbackground=LIGHT_THEME['bg'],
+                                highlightcolor=LIGHT_THEME['bg'])
+        # Luego, aplicar a todos los widgets (incluida la raíz)
         for widget in [self.root] + self.open_toplevels[:]:
             if widget.winfo_exists():
                 self.apply_theme_to_widget(widget)
+        # Forzar actualización visual
         self.root.update_idletasks()
+        self.root.update()
 
     def poll_theme_changes(self):
         new_theme = detect_system_theme()
