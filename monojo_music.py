@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.3: tema automático claro/oscuro mejorado
+# Monojo Music 2.3: tema automático con escucha GSettings
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -64,7 +64,7 @@ MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 PLAYLIST_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL_MS = 250
-THEME_POLL_INTERVAL_MS = 2000
+THEME_POLL_INTERVAL_MS = 2000   # Solo si no se puede usar GSettings
 
 # ------------------- Detectar ffplay -------------------
 FFPLAY_PATH = shutil.which("ffplay")
@@ -75,7 +75,7 @@ if not FFPLAY_PATH:
 FFPLAY_EXEC = FFPLAY_PATH
 
 # --------------- Nombre que queremos en el panel de sonido ---------------
-STREAM_NAME = "Monojo Music"   # Se verá en el mezclador de aplicaciones
+STREAM_NAME = "Monojo Music"
 
 # ---------------- Utilidades de audio ----------------
 def ffprobe_duration(path):
@@ -287,18 +287,18 @@ if MPRIS_AVAILABLE:
 
 # ---------------- Utilidades de tema ----------------
 DARK_THEME = {
-    'bg': '#2e2e2e',           # fondo general oscuro
-    'fg': '#ffffff',           # texto blanco
-    'selectbg': '#4a90d9',     # selección azul
+    'bg': '#2e2e2e',
+    'fg': '#ffffff',
+    'selectbg': '#4a90d9',
     'selectfg': '#ffffff',
-    'entrybg': '#1e1e1e',      # fondo de listas, entradas
+    'entrybg': '#1e1e1e',
     'entryfg': '#ffffff',
     'textbg': '#1e1e1e',
     'textfg': '#ffffff',
     'scalebg': '#2e2e2e',
     'scalefg': '#ffffff',
     'troughcolor': '#555555',
-    'buttonbg': '#3c3c3c',     # botones: negro claro
+    'buttonbg': '#3c3c3c',
     'buttonfg': '#ffffff',
     'buttonactivebg': '#4a4a4a',
     'buttonactivefg': '#ffffff',
@@ -306,10 +306,9 @@ DARK_THEME = {
 }
 
 def detect_system_theme():
-    """Devuelve 'dark' o 'light' según la configuración del sistema."""
+    """Devuelve 'dark' o 'light' consultando varias fuentes."""
     debug("Detectando tema del sistema...")
-
-    # 1. Intentar con gsettings color-scheme (más fiable en GNOME reciente)
+    # 1. gsettings color-scheme (GNOME 42+)
     try:
         result = subprocess.run(
             ['gsettings', 'get', 'org.gnome.desktop.interface', 'color-scheme'],
@@ -321,11 +320,10 @@ def detect_system_theme():
             return 'dark'
         elif 'light' in out:
             return 'light'
-        # Si es 'default' seguimos con otros métodos
     except Exception as e:
         debug(f"Error con color-scheme: {e}")
 
-    # 2. Intentar con gsettings gtk-theme
+    # 2. gsettings gtk-theme
     try:
         result = subprocess.run(
             ['gsettings', 'get', 'org.gnome.desktop.interface', 'gtk-theme'],
@@ -338,7 +336,7 @@ def detect_system_theme():
     except Exception as e:
         debug(f"Error con gtk-theme: {e}")
 
-    # 3. Comprobar variable de entorno GTK_THEME
+    # 3. Variable de entorno GTK_THEME
     theme_env = os.environ.get('GTK_THEME', '')
     if theme_env:
         debug(f"GTK_THEME: {theme_env}")
@@ -347,32 +345,18 @@ def detect_system_theme():
         else:
             return 'light'
 
-    # 4. Comprobar variable COLOR_SCHEME
-    color_scheme_env = os.environ.get('COLOR_SCHEME', '')
-    if color_scheme_env:
-        debug(f"COLOR_SCHEME: {color_scheme_env}")
-        if 'dark' in color_scheme_env.lower():
-            return 'dark'
-        else:
-            return 'light'
-
-    # 5. Leer archivo de configuración GTK3
+    # 4. Archivo settings.ini de GTK3
     gtk_settings = Path.home() / ".config" / "gtk-3.0" / "settings.ini"
     if gtk_settings.exists():
         try:
-            with open(gtk_settings, 'r') as f:
-                content = f.read().lower()
-                if 'gtk-application-prefer-dark-theme=true' in content:
-                    debug("gtk-application-prefer-dark-theme=true encontrado en settings.ini")
-                    return 'dark'
-                if 'gtk-theme-name=' in content and 'dark' in content:
-                    debug("gtk-theme-name contiene 'dark' en settings.ini")
-                    return 'dark'
+            content = gtk_settings.read_text().lower()
+            if 'gtk-application-prefer-dark-theme=true' in content:
+                return 'dark'
+            if 'gtk-theme-name=' in content and 'dark' in content:
+                return 'dark'
         except Exception as e:
             debug(f"Error leyendo settings.ini: {e}")
 
-    # 6. Fallback: claro
-    debug("No se detectó tema oscuro, asumiendo claro")
     return 'light'
 
 # ---------------- Aplicación principal ----------------
@@ -409,26 +393,21 @@ class MonojoMusicApp:
         self.shuffle_history = []
         self.undo_stack = []
 
-        # Ventanas informativas (toggle)
+        # Ventanas informativas
         self.guide_window = None
         self.credits_window = None
 
         # Tema
         self.current_theme = detect_system_theme()
-        self.open_toplevels = []  # Lista de ventanas emergentes para actualizar tema
-        self.default_colors = {}   # Guardará los colores originales de cada widget
+        self.open_toplevels = []
+        self.default_colors = {}
+        self._theme_listener = None   # Para GSettings
 
         # Construir interfaz
         self.build_ui()
-
-        # Guardar colores por defecto de los widgets principales
         self._save_default_colors()
-
-        # Aplicar tema inicial (si es dark, se aplica; si light, no se toca nada)
         if self.current_theme == 'dark':
-            debug("Aplicando tema oscuro inicial...")
             self.apply_dark_theme_to_widget(self.root)
-            self.root.update_idletasks()
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -436,7 +415,9 @@ class MonojoMusicApp:
         self.refresh_library()
         self.reload_playlist_listbox()
         self.root.after(POLL_INTERVAL_MS, self.poll_playback)
-        self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
+
+        # Configurar detección de cambios de tema
+        self._setup_theme_listener()
 
         if self.lib_files:
             self.lib_listbox.selection_set(0)
@@ -454,15 +435,10 @@ class MonojoMusicApp:
                 debug("MPRIS iniciado correctamente.")
             except Exception as e:
                 debug(f"No se pudo iniciar MPRIS: {e}")
-        else:
-            debug("MPRIS no disponible. La integración multimedia no se activará.")
 
     # --------------- Funciones de tema ---------------
     def _save_default_colors(self):
-        """Guarda los colores por defecto de los widgets principales para poder restaurarlos."""
         self.default_colors['root_bg'] = self.root.cget('bg')
-        debug(f"Color de fondo raíz por defecto: {self.default_colors['root_bg']}")
-
         for widget in self._all_widgets(self.root):
             cls = widget.winfo_class()
             if cls not in self.default_colors:
@@ -483,9 +459,8 @@ class MonojoMusicApp:
                         self.default_colors[cls]['insertbackground'] = widget.cget('insertbackground')
                         self.default_colors[cls]['selectbackground'] = widget.cget('selectbackground')
                         self.default_colors[cls]['selectforeground'] = widget.cget('selectforeground')
-                except Exception as e:
-                    debug(f"No se pudo guardar color para {cls}: {e}")
-
+                except:
+                    pass
         if 'Button' not in self.default_colors:
             self.default_colors['Button'] = {
                 'bg': '#d9d9d9',
@@ -495,13 +470,11 @@ class MonojoMusicApp:
             }
 
     def _all_widgets(self, parent):
-        """Generador recursivo de todos los widgets hijos."""
         for child in parent.winfo_children():
             yield child
             yield from self._all_widgets(child)
 
     def apply_dark_theme_to_widget(self, widget):
-        """Aplica el tema oscuro a un widget y sus hijos, incluyendo botones."""
         colors = DARK_THEME
         cls = widget.winfo_class()
         try:
@@ -551,7 +524,6 @@ class MonojoMusicApp:
             self.apply_dark_theme_to_widget(child)
 
     def restore_default_theme_to_widget(self, widget):
-        """Restaura los colores por defecto a un widget y sus hijos, incluyendo botones."""
         cls = widget.winfo_class()
         try:
             if cls in ('Frame', 'Labelframe', 'Toplevel', 'Tk'):
@@ -560,8 +532,6 @@ class MonojoMusicApp:
                 if 'Label' in self.default_colors:
                     d = self.default_colors['Label']
                     widget.configure(bg=d.get('bg', '#d9d9d9'), fg=d.get('fg', '#000000'))
-                else:
-                    widget.configure(bg=self.default_colors['root_bg'], fg='#000000')
             elif cls == 'Listbox':
                 if 'Listbox' in self.default_colors:
                     d = self.default_colors['Listbox']
@@ -577,8 +547,6 @@ class MonojoMusicApp:
                     widget.configure(bg=d.get('bg', '#d9d9d9'), fg=d.get('fg', 'black'),
                                      troughcolor=d.get('troughcolor', '#d9d9d9'),
                                      highlightthickness=0)
-                else:
-                    widget.configure(bg='#d9d9d9', fg='black', highlightthickness=0)
             elif cls in ('Text', 'Entry'):
                 if cls in self.default_colors:
                     d = self.default_colors[cls]
@@ -606,7 +574,6 @@ class MonojoMusicApp:
             self.restore_default_theme_to_widget(child)
 
     def apply_theme_to_all(self):
-        """Aplica el tema actual a todas las ventanas (principal y emergentes)."""
         for widget in [self.root] + self.open_toplevels[:]:
             if widget.winfo_exists():
                 if self.current_theme == 'dark':
@@ -615,14 +582,42 @@ class MonojoMusicApp:
                     self.restore_default_theme_to_widget(widget)
         self.root.update_idletasks()
 
-    def poll_theme_changes(self):
-        """Comprueba periódicamente si el tema del sistema ha cambiado."""
+    def _setup_theme_listener(self):
+        """Intenta escuchar cambios de GSettings para actualización instantánea."""
+        try:
+            import gi
+            gi.require_version('Gio', '2.0')
+            from gi.repository import Gio
+            settings = Gio.Settings.new('org.gnome.desktop.interface')
+            settings.connect('changed::color-scheme', self._on_gs_change)
+            settings.connect('changed::gtk-theme', self._on_gs_change)
+            self._theme_listener = settings
+            debug("Escucha de GSettings activada.")
+        except Exception as e:
+            debug(f"No se pudo usar GSettings, usando polling: {e}")
+            self._theme_listener = None
+            self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
+
+    def _on_gs_change(self, *args):
+        debug("Cambio detectado en GSettings, actualizando tema...")
         new_theme = detect_system_theme()
         if new_theme != self.current_theme:
-            debug(f"Cambio de tema detectado: {self.current_theme} -> {new_theme}")
             self.current_theme = new_theme
             self.apply_theme_to_all()
-        self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
+
+    def poll_theme_changes(self):
+        if self._theme_listener is None:
+            new_theme = detect_system_theme()
+            if new_theme != self.current_theme:
+                debug(f"Cambio de tema (polling): {self.current_theme} -> {new_theme}")
+                self.current_theme = new_theme
+                self.apply_theme_to_all()
+            self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
+
+    # --------------- Botón manual para alternar tema ---------------
+    def toggle_theme_manual(self):
+        self.current_theme = 'light' if self.current_theme == 'dark' else 'dark'
+        self.apply_theme_to_all()
 
     # --------------- Ventana informativa sin botón OK (texto más grande) ---------------
     def _info(self, title, message):
@@ -786,6 +781,8 @@ class MonojoMusicApp:
         tk.Button(top, text="Cargar Playlist", command=self.choose_and_load_playlist).pack(side="left", padx=4)
         tk.Button(top, text="Créditos", command=self.toggle_credits).pack(side="right", padx=4)
         tk.Button(top, text="Atajos de teclado", command=self.toggle_guide).pack(side="right", padx=4)
+        # Botón para alternar tema manualmente
+        tk.Button(top, text="Tema", command=self.toggle_theme_manual).pack(side="right", padx=4)
 
         main = tk.Frame(self.root)
         main.pack(fill="both", expand=True, padx=6, pady=6)
