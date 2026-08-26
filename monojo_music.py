@@ -3,7 +3,7 @@
 # Monojo Music — Tkinter + ffplay/ffprobe + MPRIS2
 # Requisitos: ffplay, ffprobe, python3-dbus, python3-gi
 
-# Monojo Music 2.2: atajos de teclado y créditos
+# Monojo Music 2.3: modo claro/oscuro porque quiero escuchar música de noche
 # Licencia: GPL v3
 # Proyecto: Monojo Project
 # Autor: David Baña Szymaniak
@@ -64,6 +64,7 @@ MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 PLAYLIST_DIR.mkdir(parents=True, exist_ok=True)
 
 POLL_INTERVAL_MS = 250
+THEME_POLL_INTERVAL_MS = 2000
 
 # ------------------- Detectar ffplay -------------------
 FFPLAY_PATH = shutil.which("ffplay")
@@ -284,6 +285,65 @@ if MPRIS_AVAILABLE:
         def PropertiesChanged(self, interface_name, changed_properties, invalidated_properties):
             pass
 
+# ---------------- Utilidades de tema ----------------
+LIGHT_THEME = {
+    'bg': '#f0f0f0',
+    'fg': '#000000',
+    'selectbg': '#4a90d9',
+    'selectfg': '#ffffff',
+    'buttonbg': '#e0e0e0',
+    'buttonfg': '#000000',
+    'entrybg': '#ffffff',
+    'entryfg': '#000000',
+    'textbg': '#ffffff',
+    'textfg': '#000000',
+    'scalebg': '#f0f0f0',
+    'scalefg': '#000000',
+    'troughcolor': '#d0d0d0',
+    'highlightbackground': '#a0a0a0',
+    'bordercolor': '#a0a0a0',
+    'disabledbg': '#d0d0d0',
+    'disabledfg': '#808080',
+}
+
+DARK_THEME = {
+    'bg': '#2e2e2e',
+    'fg': '#ffffff',
+    'selectbg': '#4a90d9',
+    'selectfg': '#ffffff',
+    'buttonbg': '#3c3c3c',
+    'buttonfg': '#ffffff',
+    'entrybg': '#1e1e1e',
+    'entryfg': '#ffffff',
+    'textbg': '#1e1e1e',
+    'textfg': '#ffffff',
+    'scalebg': '#2e2e2e',
+    'scalefg': '#ffffff',
+    'troughcolor': '#555555',
+    'highlightbackground': '#555555',
+    'bordercolor': '#555555',
+    'disabledbg': '#3c3c3c',
+    'disabledfg': '#888888',
+}
+
+def detect_system_theme():
+    """Devuelve 'dark' o 'light' según la configuración del sistema."""
+    try:
+        result = subprocess.run(
+            ['gsettings', 'get', 'org.gnome.desktop.interface', 'color-scheme'],
+            capture_output=True, text=True, timeout=2
+        )
+        if 'dark' in result.stdout.lower():
+            return 'dark'
+        else:
+            return 'light'
+    except Exception:
+        # Fallback: comprobar variable GTK_THEME
+        theme_env = os.environ.get('GTK_THEME', '')
+        if 'dark' in theme_env.lower():
+            return 'dark'
+        return 'light'
+
 # ---------------- Aplicación principal ----------------
 class MonojoMusicApp:
     def __init__(self, root):
@@ -322,14 +382,20 @@ class MonojoMusicApp:
         self.guide_window = None
         self.credits_window = None
 
+        # Tema
+        self.current_theme = detect_system_theme()
+        self.open_toplevels = []  # Lista de ventanas emergentes para actualizar tema
+
         # Construir interfaz
         self.build_ui()
+        self.apply_theme_to_widget(self.root)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # Inicializar datos
         self.refresh_library()
         self.reload_playlist_listbox()
         self.root.after(POLL_INTERVAL_MS, self.poll_playback)
+        self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
 
         if self.lib_files:
             self.lib_listbox.selection_set(0)
@@ -350,6 +416,78 @@ class MonojoMusicApp:
         else:
             debug("MPRIS no disponible. La integración multimedia no se activará.")
 
+    # --------------- Funciones de tema ---------------
+    def apply_theme_to_widget(self, widget):
+        """Aplica el tema actual a un widget y sus hijos recursivamente."""
+        colors = DARK_THEME if self.current_theme == 'dark' else LIGHT_THEME
+        cls = widget.winfo_class()
+        try:
+            if cls in ('Frame', 'Labelframe', 'Toplevel', 'Tk'):
+                widget.configure(bg=colors['bg'])
+            elif cls == 'Label':
+                widget.configure(bg=colors['bg'], fg=colors['fg'])
+            elif cls == 'Button':
+                widget.configure(
+                    bg=colors['buttonbg'], fg=colors['buttonfg'],
+                    activebackground=colors['buttonbg'], activeforeground=colors['buttonfg'],
+                    highlightbackground=colors['highlightbackground'],
+                    highlightcolor=colors['highlightbackground'],
+                    relief='raised', bd=1
+                )
+            elif cls == 'Listbox':
+                widget.configure(
+                    bg=colors['entrybg'], fg=colors['entryfg'],
+                    selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
+                    highlightbackground=colors['highlightbackground'],
+                    highlightcolor=colors['highlightbackground'],
+                    relief='solid', bd=1
+                )
+            elif cls == 'Scale':
+                widget.configure(
+                    bg=colors['scalebg'], fg=colors['scalefg'],
+                    troughcolor=colors['troughcolor'],
+                    highlightbackground=colors['highlightbackground'],
+                    highlightcolor=colors['highlightbackground']
+                )
+            elif cls == 'Text':
+                widget.configure(
+                    bg=colors['textbg'], fg=colors['textfg'],
+                    insertbackground=colors['fg'],
+                    selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
+                    highlightbackground=colors['highlightbackground'],
+                    highlightcolor=colors['highlightbackground']
+                )
+            elif cls == 'Entry':
+                widget.configure(
+                    bg=colors['entrybg'], fg=colors['entryfg'],
+                    insertbackground=colors['fg'],
+                    selectbackground=colors['selectbg'], selectforeground=colors['selectfg'],
+                    highlightbackground=colors['highlightbackground'],
+                    highlightcolor=colors['highlightbackground']
+                )
+        except tk.TclError:
+            pass  # Ignorar si el widget no soporta alguna opción
+
+        # Aplicar recursivamente a los hijos
+        for child in widget.winfo_children():
+            self.apply_theme_to_widget(child)
+
+    def apply_theme_to_all(self):
+        """Aplica el tema a la ventana principal y a todas las ventanas emergentes."""
+        self.apply_theme_to_widget(self.root)
+        for toplevel in self.open_toplevels[:]:
+            if toplevel.winfo_exists():
+                self.apply_theme_to_widget(toplevel)
+
+    def poll_theme_changes(self):
+        """Comprueba periódicamente si el tema del sistema ha cambiado."""
+        new_theme = detect_system_theme()
+        if new_theme != self.current_theme:
+            debug(f"Cambio de tema detectado: {self.current_theme} -> {new_theme}")
+            self.current_theme = new_theme
+            self.apply_theme_to_all()
+        self.root.after(THEME_POLL_INTERVAL_MS, self.poll_theme_changes)
+
     # --------------- Ventana informativa sin botón OK (texto más grande) ---------------
     def _info(self, title, message):
         dlg = tk.Toplevel(self.root)
@@ -360,7 +498,6 @@ class MonojoMusicApp:
         tk.Label(dlg, text=message, wraplength=450, justify="left",
                  font=("TkDefaultFont", 12), padx=20, pady=20).pack()
 
-        # Asegurar que la ventana está visible antes de tomar el grab
         dlg.wait_visibility()
         dlg.grab_set()
 
@@ -374,6 +511,10 @@ class MonojoMusicApp:
         x = self.root.winfo_x() + (self.root.winfo_width() - dlg.winfo_width()) // 2
         y = self.root.winfo_y() + (self.root.winfo_height() - dlg.winfo_height()) // 2
         dlg.geometry(f"+{x}+{y}")
+
+        self.apply_theme_to_widget(dlg)
+        self.open_toplevels.append(dlg)
+        dlg.bind("<Destroy>", lambda e: self.open_toplevels.remove(dlg) if dlg in self.open_toplevels else None)
 
     # ==================== Ventanas de ayuda (toggle) ====================
     def toggle_guide(self):
@@ -425,13 +566,11 @@ class MonojoMusicApp:
         dlg.geometry("560x550")
         dlg.resizable(False, False)
 
-        # Texto sin scrollbar; el scroll con rueda o flechas sigue funcionando
         text_widget = tk.Text(dlg, wrap="word", font=("TkDefaultFont", 10), padx=10, pady=10)
         text_widget.insert("1.0", guia_texto)
         text_widget.config(state="disabled")
         text_widget.pack(fill="both", expand=True, padx=12, pady=12)
 
-        # Scroll con rueda del ratón (para todas las plataformas)
         def _on_mousewheel(event):
             text_widget.yview_scroll(int(-1*(event.delta/120)), "units")
         text_widget.bind("<MouseWheel>", _on_mousewheel)
@@ -446,6 +585,10 @@ class MonojoMusicApp:
         self.guide_window = dlg
         dlg.focus_set()
 
+        self.apply_theme_to_widget(dlg)
+        self.open_toplevels.append(dlg)
+        dlg.bind("<Destroy>", lambda e: self.open_toplevels.remove(dlg) if dlg in self.open_toplevels else None)
+
     def _close_guide(self, dlg):
         if self.guide_window == dlg:
             dlg.destroy()
@@ -453,7 +596,7 @@ class MonojoMusicApp:
 
     def _show_credits_window(self):
         creditos = (
-            "Monojo Music 2.2\n\n"
+            "Monojo Music 2.3\n\n"
             "Desarrollado por David Baña Szymaniak\n"
             "Monojo Project\n\n"
             "Licencia GPL v3 o posterior\n\n"
@@ -476,6 +619,10 @@ class MonojoMusicApp:
         dlg.geometry(f"+{x}+{y}")
         self.credits_window = dlg
         dlg.focus_set()
+
+        self.apply_theme_to_widget(dlg)
+        self.open_toplevels.append(dlg)
+        dlg.bind("<Destroy>", lambda e: self.open_toplevels.remove(dlg) if dlg in self.open_toplevels else None)
 
     def _close_credits(self, dlg):
         if self.credits_window == dlg:
@@ -840,7 +987,6 @@ class MonojoMusicApp:
 
         tk.Label(top, text="Selecciona una playlist para cargar:").pack(pady=10)
 
-        # Listbox sin scrollbar
         listbox = tk.Listbox(top, selectmode="single", exportselection=False)
         listbox.pack(fill="both", expand=True, padx=15, pady=5)
 
@@ -881,6 +1027,10 @@ class MonojoMusicApp:
         top.bind("<Escape>", lambda e: top.destroy())
         top.bind("<q>", lambda e: top.destroy())
         top.bind("<Q>", lambda e: top.destroy())
+
+        self.apply_theme_to_widget(top)
+        self.open_toplevels.append(top)
+        top.bind("<Destroy>", lambda e: self.open_toplevels.remove(top) if top in self.open_toplevels else None)
 
     def _load_playlist_file(self, choice):
         path = os.path.join(PLAYLIST_DIR, choice + ".txt")
